@@ -1,0 +1,56 @@
+name: Release Artifacts
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          VERSION="${{ github.event.release.tag_name }}"
+          GIT_COMMIT="${GITHUB_SHA::7}"
+          BUILD_TIME="$(date -u +%Y%m%dT%H%M%SZ)"
+          LDFLAGS="-s -w \
+            -X github.com/omersiar/ript/internal/version.Version=${VERSION} \
+            -X github.com/omersiar/ript/internal/version.GitCommit=${GIT_COMMIT} \
+            -X github.com/omersiar/ript/internal/version.BuildTime=${BUILD_TIME}"
+
+          GOOS=linux   GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/ript-linux-amd64          ./cmd/ript
+          GOOS=linux   GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/ript-linux-arm64          ./cmd/ript
+          GOOS=darwin  GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/ript-darwin-amd64         ./cmd/ript
+          GOOS=darwin  GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/ript-darwin-arm64         ./cmd/ript
+          GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/ript-windows-amd64.exe    ./cmd/ript
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+
+      - name: Upload assets to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/ript-linux-amd64
+            dist/ript-linux-arm64
+            dist/ript-darwin-amd64
+            dist/ript-darwin-arm64
+            dist/ript-windows-amd64.exe
+            dist/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

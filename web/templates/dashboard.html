@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RIPT - Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.1/build/global/luxon.min.js"></script>
+    <style>
+        :root {
+            --bg: #efefef;
+            --surface: #ffffff;
+            --surface-muted: #f5f5f5;
+            --ink: #141414;
+            --ink-muted: #5f5f5f;
+            --line: #d8d8d8;
+            --shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+            --active: #202020;
+            --stale: #6d6d6d;
+            --unused: #0a0a0a;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--ink);
+            font-family: "Manrope", "Trebuchet MS", sans-serif;
+            letter-spacing: 0.01em;
+        }
+
+        .app-nav {
+            background: #101010;
+            border-bottom: 1px solid #1f1f1f;
+            box-shadow: var(--shadow);
+        }
+
+        .navbar-brand {
+            font-size: 1.2rem;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .toolbar-btn {
+            border-radius: 10px;
+            border: 1px solid #2c2c2c;
+            color: #f0f0f0;
+            background: #1c1c1c;
+            padding: 0.48rem 0.9rem;
+            font-weight: 600;
+        }
+
+        .toolbar-btn:hover {
+            background: #2a2a2a;
+            color: #ffffff;
+        }
+
+        .stats-card {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            box-shadow: var(--shadow);
+            height: 100%;
+        }
+
+        .stats-card .card-body {
+            padding: 1.3rem;
+        }
+
+        .stats-label {
+            font-size: 0.76rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--ink-muted);
+            margin-bottom: 0.2rem;
+        }
+
+        .stats-number {
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--ink);
+            line-height: 1;
+        }
+
+        .panel {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 0.9rem 1rem;
+            background: var(--surface-muted);
+            border-bottom: 1px solid var(--line);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.8rem;
+        }
+
+        .panel-title {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--ink);
+        }
+
+        .subtle {
+            color: var(--ink-muted);
+            font-size: 0.86rem;
+        }
+
+        .filter-section {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            box-shadow: var(--shadow);
+            padding: 1rem;
+        }
+
+        .table {
+            margin-bottom: 0;
+        }
+
+        .table thead th {
+            background: #f2f2f2;
+            color: #1f1f1f;
+            font-size: 0.76rem;
+            font-weight: 800;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+            border-bottom: 1px solid var(--line);
+            white-space: nowrap;
+        }
+
+        th[data-sort] {
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            padding-right: 1.4rem !important;
+        }
+
+        th[data-sort]:hover {
+            background: #e8e8e8;
+        }
+
+        th[data-sort]::after {
+            content: '\2195';
+            position: absolute;
+            right: 0.45rem;
+            opacity: 0.3;
+            font-size: 0.7rem;
+        }
+
+        th[data-sort].sort-asc::after {
+            content: '\25B2';
+            opacity: 0.8;
+        }
+
+        th[data-sort].sort-desc::after {
+            content: '\25BC';
+            opacity: 0.8;
+        }
+
+        .table tbody td {
+            border-color: #ececec;
+            vertical-align: middle;
+        }
+
+        .instance-link {
+            color: #161616;
+            font-weight: 700;
+            text-decoration: underline;
+            text-decoration-color: #9c9c9c;
+            text-underline-offset: 2px;
+            cursor: pointer;
+        }
+
+        .instance-link:hover {
+            color: #000;
+            text-decoration-color: #202020;
+        }
+
+        .topic-link {
+            color: #161616;
+            font-weight: 700;
+            text-decoration: underline;
+            text-decoration-color: #9c9c9c;
+            text-underline-offset: 2px;
+            cursor: pointer;
+        }
+
+        .topic-link:hover {
+            color: #000;
+            text-decoration-color: #202020;
+        }
+
+        .badge-status {
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 0.33rem 0.6rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .badge-active {
+            background: #d9d9d9;
+            color: var(--active);
+        }
+
+        .badge-stale {
+            background: #c6c6c6;
+            color: var(--stale);
+        }
+
+        .badge-unused {
+            background: #212121;
+            color: #f8f8f8;
+        }
+
+        .badge-issue {
+            background: #fff3cd;
+            color: #664d03;
+        }
+
+        .error {
+            background: #2a0d0f;
+            color: #ffd8da;
+            border: 1px solid #6d1f26;
+            padding: 0.8rem 0.9rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .loading {
+            text-align: center;
+            color: var(--ink-muted);
+            padding: 1.4rem;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 2.5rem 1rem;
+            color: var(--ink-muted);
+        }
+
+        .empty-state svg {
+            width: 58px;
+            height: 58px;
+            opacity: 0.45;
+            margin-bottom: 0.7rem;
+        }
+
+        .pager {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.7rem;
+            padding: 0.8rem 1rem;
+            border-top: 1px solid var(--line);
+            background: #fafafa;
+        }
+
+        .pager-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+
+        #pageNumbers {
+            display: inline-flex;
+            gap: 0.3rem;
+        }
+
+        .table code {
+            background: #f0f0f0;
+            color: #2a2a2a;
+            border-radius: 6px;
+            padding: 0.15rem 0.4rem;
+            font-size: 0.78rem;
+        }
+
+        @media (max-width: 768px) {
+            .stats-number {
+                font-size: 1.6rem;
+            }
+
+            .panel-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .pager {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark app-nav">
+        <div class="container-lg">
+            <a class="navbar-brand" href="/">RIPT</a>
+            <div class="ms-auto d-flex gap-2">
+                <button class="toolbar-btn" id="settingsBtn" data-bs-toggle="modal" data-bs-target="#settingsModal">Settings</button>
+                <button class="toolbar-btn" id="refreshBtn">Refresh</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-lg my-4">
+        <div id="errorContainer"></div>
+
+        <div class="row g-3 mb-3" id="statsContainer">
+            <div class="col-6 col-lg">
+                <div class="card stats-card">
+                    <div class="card-body">
+                        <div class="stats-label">Total Topics</div>
+                        <div class="stats-number" id="totalTopics">-</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg">
+                <div class="card stats-card">
+                    <div class="card-body">
+                        <div class="stats-label">Total Partitions</div>
+                        <div class="stats-number" id="totalPartitions">-</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg">
+                <div class="card stats-card">
+                    <div class="card-body">
+                        <div class="stats-label">Unused Topics</div>
+                        <div class="stats-number" id="unusedTopics">-</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg">
+                <div class="card stats-card">
+                    <div class="card-body">
+                        <div class="stats-label">Stale Partitions</div>
+                        <div class="stats-number" id="stalePartitions">-</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg">
+                <div class="card stats-card">
+                    <div class="card-body">
+                        <div class="stats-label">Active Instances</div>
+                        <div class="stats-number" id="activeInstances">-</div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="panel mb-3">
+            <div class="panel-header">
+                <h5 class="panel-title">Tracker Instances</h5>
+                <span class="subtle">Current instances and heartbeat status</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover" id="instancesTable">
+                    <thead>
+                        <tr>
+                            <th>Instance ID</th>
+                            <th>Group</th>
+                            <th>Shards</th>
+                            <th>Last Heartbeat</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="instancesTableBody">
+                        <tr><td colspan="5" class="loading">Loading instances...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="filter-section mb-3">
+            <div class="row g-3 align-items-end">
+                <div class="col-12 col-md-4">
+                    <label for="topicSearch" class="form-label">Search Topics <small class="text-muted">(supports regex)</small></label>
+                    <input type="text" id="topicSearch" class="form-control" placeholder="e.g. orders-.* or ^prod">
+                    <div id="searchError" class="text-danger small mt-1" style="display:none;"></div>
+                </div>
+                <div class="col-12 col-md-2">
+                    <label for="filterThreshold" class="form-label">Unused (days)</label>
+                    <input type="number" id="filterThreshold" class="form-control" min="1">
+                </div>
+                <div class="col-12 col-md-2">
+                    <label for="pageSize" class="form-label">Page Size</label>
+                    <select id="pageSize" class="form-select">
+                        <option value="25">25</option>
+                        <option value="50" selected>50</option>
+                        <option value="100">100</option>
+                        <option value="200">200</option>
+                    </select>
+                </div>
+                <div class="col-12 col-md-4 d-flex gap-2">
+                    <button class="btn btn-dark flex-fill" id="filterBtn">Filter Unused</button>
+                    <button class="btn btn-outline-dark flex-fill" id="showAllBtn">Show All Topics</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-header">
+                <h5 class="panel-title" id="tableTitle">All Topics</h5>
+                <span class="subtle" id="tableMeta">-</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover" id="topicsTable">
+                    <thead>
+                        <tr>
+                            <th data-sort="name">Topic Name</th>
+                            <th data-sort="partitions">Partitions</th>
+                            <th data-sort="age">Oldest Partition Age</th>
+                            <th data-sort="status">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="topicsTableBody">
+                        <tr><td colspan="4" class="loading">Loading topics...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="pager">
+                <div class="subtle" id="paginationSummary">-</div>
+                <div class="pager-controls">
+                    <button class="btn btn-sm btn-outline-dark" id="prevPageBtn">Previous</button>
+                    <span id="pageNumbers"></span>
+                    <button class="btn btn-sm btn-outline-dark" id="nextPageBtn">Next</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="emptyState" class="empty-state" style="display: none;">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+            </svg>
+            <h6>No topics found</h6>
+            <p>No topics match the current criteria.</p>
+        </div>
+
+        <div class="mt-4 pb-3">
+            <small class="text-muted">Last updated: <span id="lastUpdate">-</span></small>
+        </div>
+    </div>
+
+    <div class="modal fade" id="instanceDetailsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="instanceModalTitle">Instance Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="instanceModalBody">
+                    <p class="subtle">Loading...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="topicDetailsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="topicModalTitle">Topic Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="topicDetailsMeta" class="subtle mb-3"></div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Partition</th>
+                                    <th>Offset</th>
+                                    <th>Age</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="topicDetailsTableBody">
+                                <tr><td colspan="4" class="loading">Select a topic to view partition details.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="settingsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Frontend Threshold Settings</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="subtle mb-3">These settings are stored in your browser and only affect dashboard labels and defaults.</p>
+                    <div class="mb-3">
+                        <label for="staleThresholdSetting" class="form-label">Stale threshold (days)</label>
+                        <input type="number" id="staleThresholdSetting" class="form-control" min="1">
+                    </div>
+                    <div class="mb-3">
+                        <label for="unusedThresholdSetting" class="form-label">Unused threshold (days)</label>
+                        <input type="number" id="unusedThresholdSetting" class="form-control" min="1">
+                    </div>
+                    <div id="settingsError" class="text-danger small" style="display:none;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-dark" id="resetSettingsBtn">Reset Defaults</button>
+                    <button type="button" class="btn btn-dark" id="saveSettingsBtn">Save Settings</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const API_BASE = '/api';
+        const SETTINGS_KEYS = {
+            stale: 'ript.staleDays',
+            unused: 'ript.unusedDays',
+            pageSize: 'ript.pageSize',
+            filterThreshold: 'ript.filterThreshold'
+        };
+        const DEFAULTS = {
+            staleDays: {{ .StaleDays }},
+            unusedDays: {{ .UnusedDays }},
+            pageSize: {{ .PageSize }}
+        };
+
+        let latestInstances = [];
+        let currentMode = 'all';
+        let currentPage = 1;
+        let pageSize = DEFAULTS.pageSize;
+        let currentThreshold = DEFAULTS.unusedDays;
+        let totalItems = 0;
+        let hasMore = false;
+        let isLoadingTopics = false;
+        let latestTopics = [];
+        let sortColumn = null;
+        let sortDirection = 'asc';
+        let searchQuery = '';
+        let searchDebounceTimer = null;
+
+        const instanceDetailsModal = new bootstrap.Modal(document.getElementById('instanceDetailsModal'));
+        const topicDetailsModal = new bootstrap.Modal(document.getElementById('topicDetailsModal'));
+        const settingsModal = new bootstrap.Modal(document.getElementById('settingsModal'));
+
+        function formatRelativeTime(isoString) {
+            if (!isoString) return '-';
+            try {
+                const dt = luxon.DateTime.fromISO(isoString);
+                return dt.toRelative();
+            } catch (_) {
+                return isoString;
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function getStatusByAge(ageDays) {
+            const staleDays = parseInt(localStorage.getItem(SETTINGS_KEYS.stale) || `${DEFAULTS.staleDays}`, 10);
+            const unusedDays = parseInt(localStorage.getItem(SETTINGS_KEYS.unused) || `${DEFAULTS.unusedDays}`, 10);
+
+            if (ageDays >= unusedDays) {
+                return { label: 'Unused', className: 'badge-unused' };
+            }
+            if (ageDays >= staleDays) {
+                return { label: 'Stale', className: 'badge-stale' };
+            }
+            return { label: 'Active', className: 'badge-active' };
+        }
+
+        function timestampToAgeDays(epochSeconds) {
+            if (!epochSeconds) return 0;
+            return (Math.floor(Date.now() / 1000) - epochSeconds) / 86400;
+        }
+
+        function formatAge(epochSeconds) {
+            if (!epochSeconds) return '-';
+            const now = Math.floor(Date.now() / 1000);
+            let diff = now - epochSeconds;
+            if (diff < 0) diff = 0;
+            const days = Math.floor(diff / 86400);
+            const hours = Math.floor((diff % 86400) / 3600);
+            const minutes = Math.floor((diff % 3600) / 60);
+            const seconds = diff % 60;
+            const pl = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+            if (days > 0) return hours === 0 ? pl(days, 'day') : `${pl(days, 'day')} ${pl(hours, 'hour')}`;
+            if (hours > 0) return minutes === 0 ? pl(hours, 'hour') : `${pl(hours, 'hour')} ${pl(minutes, 'minute')}`;
+            if (minutes > 0) return seconds === 0 ? pl(minutes, 'minute') : `${pl(minutes, 'minute')} ${pl(seconds, 'second')}`;
+            return pl(seconds, 'second');
+        }
+
+        function getTopicStatus(oldestTimestamp, newestTimestamp) {
+            const staleDays = parseInt(localStorage.getItem(SETTINGS_KEYS.stale) || `${DEFAULTS.staleDays}`, 10);
+            const unusedDays = parseInt(localStorage.getItem(SETTINGS_KEYS.unused) || `${DEFAULTS.unusedDays}`, 10);
+            const newestAgeDays = timestampToAgeDays(newestTimestamp);
+            const oldestAgeDays = timestampToAgeDays(oldestTimestamp);
+
+            if (newestAgeDays >= unusedDays) {
+                return { label: 'Unused', className: 'badge-unused' };
+            }
+            if (oldestAgeDays >= staleDays) {
+                return { label: 'Has Stale', className: 'badge-issue' };
+            }
+            return { label: 'Active', className: 'badge-active' };
+        }
+
+        function loadSettingsIntoUI() {
+            const stale = parseInt(localStorage.getItem(SETTINGS_KEYS.stale) || `${DEFAULTS.staleDays}`, 10);
+            const unused = parseInt(localStorage.getItem(SETTINGS_KEYS.unused) || `${DEFAULTS.unusedDays}`, 10);
+            pageSize = parseInt(localStorage.getItem(SETTINGS_KEYS.pageSize) || `${DEFAULTS.pageSize}`, 10);
+            currentThreshold = parseInt(localStorage.getItem(SETTINGS_KEYS.filterThreshold) || `${unused}`, 10);
+
+            document.getElementById('staleThresholdSetting').value = stale;
+            document.getElementById('unusedThresholdSetting').value = unused;
+            document.getElementById('filterThreshold').value = currentThreshold;
+            document.getElementById('pageSize').value = `${pageSize}`;
+        }
+
+        function validateSettings(stale, unused) {
+            if (!Number.isInteger(stale) || stale < 1) {
+                return 'Stale threshold must be an integer >= 1';
+            }
+            if (!Number.isInteger(unused) || unused < 1) {
+                return 'Unused threshold must be an integer >= 1';
+            }
+            if (unused < stale) {
+                return 'Unused threshold must be greater than or equal to stale threshold';
+            }
+            return '';
+        }
+
+        function showError(message) {
+            const errorContainer = document.getElementById('errorContainer');
+            errorContainer.innerHTML = `<div class="error">${escapeHtml(message)}</div>`;
+            setTimeout(() => {
+                errorContainer.innerHTML = '';
+            }, 5000);
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch(`${API_BASE}/stats`);
+                if (!response.ok) {
+                    throw new Error(`stats returned ${response.status}`);
+                }
+                const data = await response.json();
+                document.getElementById('totalTopics').textContent = data.total_topics ?? '-';
+                document.getElementById('totalPartitions').textContent = data.total_partitions ?? '-';
+                document.getElementById('unusedTopics').textContent = data.unused_topics ?? '-';
+                document.getElementById('stalePartitions').textContent = data.stale_partitions ?? '-';
+                document.getElementById('activeInstances').textContent = data.active_instances ?? '0';
+                document.getElementById('lastUpdate').textContent = formatRelativeTime(data.last_scan);
+            } catch (error) {
+                console.error('Error loading stats:', error);
+                showError('Failed to load cluster stats.');
+            }
+        }
+
+        async function loadInstances() {
+            try {
+                const response = await fetch(`${API_BASE}/instances`);
+                if (!response.ok) {
+                    throw new Error(`instances returned ${response.status}`);
+                }
+                const data = await response.json();
+                latestInstances = data.instances || [];
+                renderInstances(latestInstances);
+            } catch (error) {
+                console.error('Error loading instances:', error);
+                showError('Failed to load tracker instances.');
+            }
+        }
+
+        function renderInstances(instances) {
+            const body = document.getElementById('instancesTableBody');
+            if (!instances || instances.length === 0) {
+                body.innerHTML = '<tr><td colspan="5" class="loading">No instances discovered.</td></tr>';
+                return;
+            }
+
+            body.innerHTML = instances.map(instance => {
+                const status = instance.is_active ? { label: 'Active', cls: 'badge-active' } : { label: 'Stale', cls: 'badge-stale' };
+                const group = escapeHtml(instance.group_id || '-');
+                const shards = instance.assigned_shards > 0 ? instance.assigned_shards : '-';
+                const heartbeat = instance.last_heartbeat_at ? formatRelativeTime(instance.last_heartbeat_at) : '-';
+
+                return `
+                    <tr>
+                        <td><span class="instance-link" data-instance-id="${escapeHtml(instance.instance_id)}">${escapeHtml(instance.instance_id)}</span></td>
+                        <td>${group}</td>
+                        <td>${shards}</td>
+                        <td>${heartbeat}</td>
+                        <td><span class="badge badge-status ${status.cls}">${status.label}</span></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function openInstanceDetails(instanceId) {
+            const instance = latestInstances.find(i => i.instance_id === instanceId);
+            if (!instance) return;
+
+            document.getElementById('instanceModalTitle').textContent = `Instance: ${instance.instance_id}`;
+            const status = instance.is_active ? '<span class="badge badge-status badge-active">Active</span>' : '<span class="badge badge-status badge-stale">Stale</span>';
+
+            const rows = [
+                ['Status', status],
+                ['Group ID', `<code>${escapeHtml(instance.group_id || '-')}</code>`],
+                ['Last Heartbeat', instance.last_heartbeat_at ? formatRelativeTime(instance.last_heartbeat_at) : '-'],
+                ['Scan Interval', instance.scan_interval_sec > 0 ? `${instance.scan_interval_sec}s` : '-'],
+                ['Assigned Shards', instance.assigned_shards > 0 ? instance.assigned_shards : '-'],
+            ];
+
+            const body = document.getElementById('instanceModalBody');
+            body.innerHTML = `<table class="table table-sm">
+                <tbody>
+                    ${rows.map(([label, value]) => `<tr><th style="width:40%;color:var(--ink-muted);font-size:0.82rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em">${escapeHtml(label)}</th><td>${value}</td></tr>`).join('')}
+                </tbody>
+            </table>`;
+
+            instanceDetailsModal.show();
+        }
+
+        function buildTopicsUrl() {
+            const params = new URLSearchParams({
+                page: `${currentPage}`,
+                limit: `${pageSize}`
+            });
+
+            if (sortColumn) {
+                params.set('sort_by', sortColumn);
+                params.set('sort_dir', sortDirection);
+            }
+
+            if (searchQuery) {
+                params.set('search', searchQuery);
+            }
+
+            if (currentMode === 'unused') {
+                params.set('threshold_days', `${currentThreshold}`);
+                return `${API_BASE}/unused?${params.toString()}`;
+            }
+            return `${API_BASE}/topics?${params.toString()}`;
+        }
+
+        async function loadTopics() {
+            if (isLoadingTopics) {
+                return;
+            }
+            isLoadingTopics = true;
+            setRefreshLoading(true);
+
+            try {
+                const response = await fetch(buildTopicsUrl());
+                if (!response.ok) {
+                    const body = await response.json().catch(() => null);
+                    if (response.status === 400 && body && body.error) {
+                        const match = body.error.match(/error parsing regexp: ([^:]+)/);
+                        const searchErr = document.getElementById('searchError');
+                        searchErr.textContent = match ? match[1] : body.error;
+                        searchErr.style.display = 'block';
+                        document.getElementById('topicSearch').classList.add('is-invalid');
+                        return;
+                    }
+                    throw new Error(`topics returned ${response.status}`);
+                }
+                document.getElementById('searchError').style.display = 'none';
+                document.getElementById('topicSearch').classList.remove('is-invalid');
+                const data = await response.json();
+
+                const topics = currentMode === 'unused' ? (data.unused_topics || []) : (data.topics || []);
+                latestTopics = topics;
+                totalItems = data.total ?? topics.length;
+                hasMore = Boolean(data.has_more);
+
+                renderTopics(topics);
+                updateTitleAndMeta();
+                updatePaginationUI(topics.length);
+            } catch (error) {
+                console.error('Error loading topics:', error);
+                showError('Failed to load topics list.');
+            } finally {
+                isLoadingTopics = false;
+                setRefreshLoading(false);
+            }
+        }
+
+        function updateTitleAndMeta() {
+            const title = currentMode === 'unused'
+                ? `Unused Topics (>${currentThreshold} days)`
+                : 'All Topics';
+            document.getElementById('tableTitle').textContent = title;
+
+            const start = totalItems === 0 ? 0 : ((currentPage - 1) * pageSize) + 1;
+            const end = Math.min(currentPage * pageSize, totalItems);
+            document.getElementById('tableMeta').textContent = `Showing ${start}-${end} of ${totalItems}`;
+        }
+
+        function updatePaginationUI(currentCount) {
+            const start = totalItems === 0 ? 0 : ((currentPage - 1) * pageSize) + 1;
+            const end = totalItems === 0 ? 0 : Math.min((currentPage - 1) * pageSize + currentCount, totalItems);
+            const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+
+            document.getElementById('paginationSummary').textContent = `${start}-${end} of ${totalItems}`;
+            document.getElementById('prevPageBtn').disabled = currentPage <= 1;
+            document.getElementById('nextPageBtn').disabled = !hasMore;
+
+            const container = document.getElementById('pageNumbers');
+            container.innerHTML = '';
+
+            const maxVisible = 7;
+            let startPage, endPage;
+            if (totalPages <= maxVisible) {
+                startPage = 1;
+                endPage = totalPages;
+            } else {
+                const half = Math.floor(maxVisible / 2);
+                startPage = Math.max(1, currentPage - half);
+                endPage = startPage + maxVisible - 1;
+                if (endPage > totalPages) {
+                    endPage = totalPages;
+                    startPage = Math.max(1, endPage - maxVisible + 1);
+                }
+            }
+
+            for (let p = startPage; p <= endPage; p++) {
+                const btn = document.createElement('button');
+                btn.className = p === currentPage ? 'btn btn-sm btn-dark' : 'btn btn-sm btn-outline-dark';
+                btn.textContent = p;
+                btn.addEventListener('click', async () => {
+                    currentPage = p;
+                    await loadTopics();
+                });
+                container.appendChild(btn);
+            }
+        }
+
+        function getStatusOrder(topic) {
+            const oldestAgeDays = timestampToAgeDays(topic.oldest_partition_timestamp);
+            const newestAgeDays = timestampToAgeDays(topic.newest_partition_timestamp);
+            const staleDays = parseInt(localStorage.getItem(SETTINGS_KEYS.stale) || `${DEFAULTS.staleDays}`, 10);
+            const unusedDays = parseInt(localStorage.getItem(SETTINGS_KEYS.unused) || `${DEFAULTS.unusedDays}`, 10);
+            if (newestAgeDays >= unusedDays) return 2;
+            if (oldestAgeDays >= staleDays) return 1;
+            return 0;
+        }
+
+        function sortTopics(topics) {
+            if (!sortColumn) return topics;
+            const sorted = topics.slice();
+            const dir = sortDirection === 'asc' ? 1 : -1;
+            sorted.sort((a, b) => {
+                switch (sortColumn) {
+                    case 'name':
+                        return dir * a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+                    case 'partitions':
+                        return dir * (a.partition_count - b.partition_count);
+                    case 'age':
+                        return dir * (a.oldest_partition_timestamp - b.oldest_partition_timestamp);
+                    case 'status':
+                        return dir * (getStatusOrder(a) - getStatusOrder(b));
+                    default:
+                        return 0;
+                }
+            });
+            return sorted;
+        }
+
+        function updateSortIndicators() {
+            document.querySelectorAll('#topicsTable th[data-sort]').forEach(th => {
+                th.classList.remove('sort-asc', 'sort-desc');
+                if (th.dataset.sort === sortColumn) {
+                    th.classList.add(sortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
+                }
+            });
+        }
+
+        function renderTopics(topics) {
+            const body = document.getElementById('topicsTableBody');
+            const emptyState = document.getElementById('emptyState');
+            const topicsTable = document.getElementById('topicsTable');
+
+            if (!topics || topics.length === 0) {
+                body.innerHTML = '<tr><td colspan="4" class="loading">No results.</td></tr>';
+                emptyState.style.display = 'block';
+                topicsTable.style.display = 'none';
+                return;
+            }
+
+            emptyState.style.display = 'none';
+            topicsTable.style.display = 'table';
+
+            updateSortIndicators();
+
+            body.innerHTML = topics.map(topic => {
+                const status = getTopicStatus(topic.oldest_partition_timestamp, topic.newest_partition_timestamp);
+
+                return `
+                    <tr>
+                        <td><span class="topic-link" data-topic-name="${escapeHtml(topic.name)}">${escapeHtml(topic.name)}</span></td>
+                        <td>${topic.partition_count}</td>
+                        <td><code>${formatAge(topic.oldest_partition_timestamp)}</code></td>
+                        <td><span class="badge badge-status ${status.className}">${status.label}</span></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function renderTopicDetails(topicName, details) {
+            const meta = document.getElementById('topicDetailsMeta');
+            const tbody = document.getElementById('topicDetailsTableBody');
+            document.getElementById('topicModalTitle').textContent = `Topic: ${topicName}`;
+
+            meta.textContent = `Partitions: ${details.partition_count} | Oldest age: ${formatAge(details.oldest_timestamp)} | Last update: ${formatRelativeTime(details.last_update)}`;
+            const partitions = (details.partitions || []).slice().sort((a, b) => a.partition - b.partition);
+
+            if (partitions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="loading">No partition details available.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = partitions.map(part => {
+                const ageDays = timestampToAgeDays(part.timestamp);
+                const status = getStatusByAge(ageDays);
+                return `
+                    <tr>
+                        <td>${part.partition}</td>
+                        <td>${part.offset}</td>
+                        <td><code>${formatAge(part.timestamp)}</code></td>
+                        <td><span class="badge badge-status ${status.className}">${status.label}</span></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        async function openTopicDetails(topicName) {
+            topicDetailsModal.show();
+            document.getElementById('topicModalTitle').textContent = `Topic: ${topicName}`;
+            document.getElementById('topicDetailsMeta').textContent = 'Loading topic details...';
+            document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="4" class="loading">Loading partition details...</td></tr>';
+
+            try {
+                const response = await fetch(`${API_BASE}/topics/${encodeURIComponent(topicName)}`);
+                if (!response.ok) {
+                    throw new Error(`topic details returned ${response.status}`);
+                }
+                const details = await response.json();
+                renderTopicDetails(topicName, details);
+            } catch (error) {
+                console.error('Error loading topic details:', error);
+                document.getElementById('topicDetailsMeta').textContent = 'Failed to load topic details.';
+                document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="4" class="loading">Unable to load partition details.</td></tr>';
+            }
+        }
+
+        function setRefreshLoading(loading) {
+            const btn = document.getElementById('refreshBtn');
+            btn.disabled = loading;
+            btn.textContent = loading ? 'Refreshing...' : 'Refresh';
+        }
+
+        async function refreshAll() {
+            await loadStats();
+            await loadInstances();
+            await loadTopics();
+        }
+
+        document.getElementById('refreshBtn').addEventListener('click', async () => {
+            await refreshAll();
+        });
+
+        document.getElementById('filterBtn').addEventListener('click', async () => {
+            const value = parseInt(document.getElementById('filterThreshold').value, 10);
+            if (!Number.isInteger(value) || value < 1) {
+                showError('Filter threshold must be an integer >= 1.');
+                return;
+            }
+            currentThreshold = value;
+            localStorage.setItem(SETTINGS_KEYS.filterThreshold, `${currentThreshold}`);
+            currentMode = 'unused';
+            currentPage = 1;
+            await loadTopics();
+        });
+
+        document.getElementById('showAllBtn').addEventListener('click', async () => {
+            currentMode = 'all';
+            currentPage = 1;
+            searchQuery = '';
+            document.getElementById('topicSearch').value = '';
+            document.getElementById('searchError').style.display = 'none';
+            document.getElementById('topicSearch').classList.remove('is-invalid');
+            await loadTopics();
+        });
+
+        document.getElementById('prevPageBtn').addEventListener('click', async () => {
+            if (currentPage <= 1) {
+                return;
+            }
+            currentPage -= 1;
+            await loadTopics();
+        });
+
+        document.getElementById('nextPageBtn').addEventListener('click', async () => {
+            if (!hasMore) {
+                return;
+            }
+            currentPage += 1;
+            await loadTopics();
+        });
+
+        document.getElementById('pageSize').addEventListener('change', async (event) => {
+            const value = parseInt(event.target.value, 10);
+            pageSize = Number.isInteger(value) && value > 0 ? value : DEFAULTS.pageSize;
+            localStorage.setItem(SETTINGS_KEYS.pageSize, `${pageSize}`);
+            currentPage = 1;
+            await loadTopics();
+        });
+
+        document.getElementById('filterThreshold').addEventListener('keypress', async (event) => {
+            if (event.key !== 'Enter') {
+                return;
+            }
+            event.preventDefault();
+            document.getElementById('filterBtn').click();
+        });
+
+        document.getElementById('topicSearch').addEventListener('input', (event) => {
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(async () => {
+                searchQuery = event.target.value.trim();
+                currentPage = 1;
+                await loadTopics();
+            }, 300);
+        });
+
+        document.getElementById('topicSearch').addEventListener('keypress', async (event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            clearTimeout(searchDebounceTimer);
+            searchQuery = event.target.value.trim();
+            currentPage = 1;
+            await loadTopics();
+        });
+
+        document.getElementById('topicsTable').querySelector('thead').addEventListener('click', async (event) => {
+            const th = event.target.closest('th[data-sort]');
+            if (!th) return;
+            const col = th.dataset.sort;
+            if (sortColumn === col) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortColumn = col;
+                sortDirection = 'asc';
+            }
+            currentPage = 1;
+            await loadTopics();
+        });
+
+        document.getElementById('instancesTableBody').addEventListener('click', (event) => {
+            const target = event.target.closest('[data-instance-id]');
+            if (!target) return;
+            const instanceId = target.getAttribute('data-instance-id');
+            if (instanceId) openInstanceDetails(instanceId);
+        });
+
+        document.getElementById('topicsTableBody').addEventListener('click', (event) => {
+            const target = event.target.closest('[data-topic-name]');
+            if (!target) {
+                return;
+            }
+            const topicName = target.getAttribute('data-topic-name');
+            if (!topicName) {
+                return;
+            }
+            openTopicDetails(topicName);
+        });
+
+        document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
+            const stale = parseInt(document.getElementById('staleThresholdSetting').value, 10);
+            const unused = parseInt(document.getElementById('unusedThresholdSetting').value, 10);
+            const error = validateSettings(stale, unused);
+            const errorBox = document.getElementById('settingsError');
+
+            if (error) {
+                errorBox.textContent = error;
+                errorBox.style.display = 'block';
+                return;
+            }
+
+            errorBox.style.display = 'none';
+            localStorage.setItem(SETTINGS_KEYS.stale, `${stale}`);
+            localStorage.setItem(SETTINGS_KEYS.unused, `${unused}`);
+
+            const thresholdInput = document.getElementById('filterThreshold');
+            if (!thresholdInput.value || parseInt(thresholdInput.value, 10) < 1) {
+                thresholdInput.value = `${unused}`;
+                currentThreshold = unused;
+                localStorage.setItem(SETTINGS_KEYS.filterThreshold, `${unused}`);
+            }
+
+            settingsModal.hide();
+            renderTopics(latestTopics);
+            if (currentMode === 'unused') {
+                await loadTopics();
+            }
+        });
+
+        document.getElementById('resetSettingsBtn').addEventListener('click', async () => {
+            localStorage.setItem(SETTINGS_KEYS.stale, `${DEFAULTS.staleDays}`);
+            localStorage.setItem(SETTINGS_KEYS.unused, `${DEFAULTS.unusedDays}`);
+            localStorage.setItem(SETTINGS_KEYS.filterThreshold, `${DEFAULTS.unusedDays}`);
+
+            document.getElementById('staleThresholdSetting').value = `${DEFAULTS.staleDays}`;
+            document.getElementById('unusedThresholdSetting').value = `${DEFAULTS.unusedDays}`;
+            document.getElementById('filterThreshold').value = `${DEFAULTS.unusedDays}`;
+            currentThreshold = DEFAULTS.unusedDays;
+
+            renderTopics(latestTopics);
+            if (currentMode === 'unused') {
+                currentPage = 1;
+                await loadTopics();
+            }
+        });
+
+        window.addEventListener('load', async () => {
+            loadSettingsIntoUI();
+            await refreshAll();
+            setInterval(async () => {
+                await loadStats();
+                await loadInstances();
+            }, 30000);
+        });
+    </script>
+</body>
+</html>
