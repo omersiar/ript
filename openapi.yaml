@@ -1,0 +1,714 @@
+openapi: 3.1.0
+info:
+  title: RIPT API
+  version: 1.0.0
+  description: |
+    OpenAPI specification for RIPT (Reclaimer of Inactive Partitions and Topics).
+
+    Notes:
+    - All timestamps are Unix epoch seconds.
+    - API is read-only and currently unversioned under /api.
+    - During startup, endpoints that depend on tracker state can return 503 with
+      partial/default payloads and an error message.
+servers:
+  - url: http://localhost:8080
+    description: Local default server
+
+tags:
+  - name: System
+    description: Service health and runtime metadata
+  - name: Topics
+    description: Topic listing and topic details
+  - name: Cluster
+    description: Cluster-wide usage and instance statistics
+  - name: UI
+    description: Dashboard/UI configuration
+
+paths:
+  /api/health:
+    get:
+      tags: [System]
+      summary: Health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is reachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: healthy
+                timestamp: 1712620800
+
+  /api/topics:
+    get:
+      tags: [Topics]
+      summary: List topics
+      description: |
+        Returns all tracked topics with pagination, optional search, and sorting.
+
+        Sorting behavior:
+        - Supported sort_by values: name, partitions, age, status.
+        - Unsupported sort_by values are silently treated as name.
+        - Supported sort_dir values: asc, desc.
+        - Unsupported sort_dir values are silently treated as asc.
+      operationId: listTopics
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/SortBy'
+        - $ref: '#/components/parameters/SortDir'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/StaleDays'
+        - $ref: '#/components/parameters/UnusedDays'
+      responses:
+        '200':
+          description: Topics page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListTopicsResponse'
+              example:
+                topics:
+                  - name: orders
+                    partition_count: 12
+                    oldest_partition_timestamp: 1710000000
+                    newest_partition_timestamp: 1712500000
+                count: 1
+                total: 145
+                page: 1
+                limit: 50
+                has_more: true
+                timestamp: 1712620800
+        '400':
+          description: Invalid query parameter values
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidPage:
+                  value:
+                    error: invalid page
+                invalidRegex:
+                  value:
+                    error: invalid search regex
+                invalidThresholds:
+                  value:
+                    error: unused_days must be greater than or equal to stale_days
+        '503':
+          description: Tracker state not initialized yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListTopicsUnavailableResponse'
+              example:
+                error: Not yet initialized, connecting to Kafka...
+                count: 0
+                topics: []
+                total: 0
+                page: 1
+                limit: 50
+                has_more: false
+
+  /api/topics/{name}:
+    get:
+      tags: [Topics]
+      summary: Get topic details
+      operationId: getTopicByName
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Topic name
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Topic details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicDetailsResponse'
+              example:
+                name: orders
+                partition_count: 3
+                partitions:
+                  - partition: 0
+                    offset: 10241
+                    timestamp: 1712000100
+                  - partition: 1
+                    offset: 11007
+                    timestamp: 1712000300
+                oldest_timestamp: 1712000100
+                newest_timestamp: 1712000300
+                last_update: 1712620800
+        '404':
+          description: Topic not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: topic not found
+        '503':
+          description: Tracker state not initialized yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: Not yet initialized, connecting to Kafka...
+
+  /api/unused:
+    get:
+      tags: [Topics]
+      summary: List unused topics
+      description: |
+        Returns topics considered unused based on unused_days threshold.
+
+        Validation behavior:
+        - stale_days and unused_days must be >= 1.
+        - unused_days must be greater than or equal to stale_days.
+      operationId: listUnusedTopics
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/SortBy'
+        - $ref: '#/components/parameters/SortDir'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/StaleDays'
+        - $ref: '#/components/parameters/UnusedDays'
+      responses:
+        '200':
+          description: Unused topics page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListUnusedTopicsResponse'
+              example:
+                stale_days: 7
+                unused_days: 30
+                unused_topics:
+                  - name: archived-orders
+                    partition_count: 6
+                    oldest_partition_timestamp: 1706000000
+                    newest_partition_timestamp: 1707000000
+                count: 1
+                total: 37
+                page: 1
+                limit: 50
+                has_more: false
+        '400':
+          description: Invalid query parameter values
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid stale_days
+        '503':
+          description: Tracker state not initialized yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListUnusedTopicsUnavailableResponse'
+              example:
+                error: Not yet initialized, connecting to Kafka...
+                count: 0
+                unused_topics: []
+                total: 0
+                page: 1
+                limit: 50
+                has_more: false
+
+  /api/stats:
+    get:
+      tags: [Cluster]
+      summary: Get cluster statistics
+      operationId: getStats
+      parameters:
+        - $ref: '#/components/parameters/StaleDays'
+        - $ref: '#/components/parameters/UnusedDays'
+      responses:
+        '200':
+          description: Current snapshot statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+              example:
+                total_topics: 145
+                total_partitions: 812
+                unused_topics: 37
+                stale_partitions: 121
+                stale_days: 7
+                unused_days: 30
+                active_instances: 2
+                last_scan: 1712620800
+                is_global: true
+                local_instance_id: ript-1
+        '400':
+          description: Invalid threshold parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: unused_days must be greater than or equal to stale_days
+        '503':
+          description: Tracker state not initialized yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsUnavailableResponse'
+              example:
+                error: Not yet initialized, connecting to Kafka...
+                total_topics: 0
+                total_partitions: 0
+                unused_topics: 0
+                stale_partitions: 0
+                active_instances: 0
+
+  /api/instances:
+    get:
+      tags: [Cluster]
+      summary: List RIPT instances
+      operationId: listInstances
+      responses:
+        '200':
+          description: Instance list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstancesResponse'
+              example:
+                instances:
+                  - instance_id: ript-1
+                    last_heartbeat_at: 1712620780
+                    heartbeat_interval_sec: 30
+                    scan_interval_sec: 300
+                    group_id: ript-scan
+                    assigned_shards: 3
+                    is_active: true
+                count: 1
+                timestamp: 1712620800
+        '503':
+          description: Tracker state not initialized yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstancesUnavailableResponse'
+              example:
+                error: Not yet initialized, connecting to Kafka...
+                instances: []
+                count: 0
+
+  /api/ui-config:
+    get:
+      tags: [UI]
+      summary: Get UI defaults
+      operationId: getUIConfig
+      responses:
+        '200':
+          description: Current UI threshold and pagination defaults
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UIConfigResponse'
+              example:
+                stale_days: 7
+                unused_days: 30
+                page_size: 50
+
+components:
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: Page number (1-based).
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    Limit:
+      name: limit
+      in: query
+      description: |
+        Page size. Runtime behavior clamps values above server max page size
+        to the configured maximum.
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 50
+
+    SortBy:
+      name: sort_by
+      in: query
+      required: false
+      description: |
+        Sort key. Supported values: name, partitions, age, status.
+        Any other value is accepted and treated as name.
+      schema:
+        type: string
+        default: name
+
+    SortDir:
+      name: sort_dir
+      in: query
+      required: false
+      description: |
+        Sort direction. Supported values: asc, desc.
+        Any other value is accepted and treated as asc.
+      schema:
+        type: string
+        default: asc
+
+    Search:
+      name: search
+      in: query
+      required: false
+      description: |
+        Case-insensitive regex applied to topic names.
+        Invalid regex returns 400.
+      schema:
+        type: string
+
+    StaleDays:
+      name: stale_days
+      in: query
+      required: false
+      description: |
+        Stale threshold in days. Must be >= 1.
+        If omitted, server uses configured default.
+      schema:
+        type: integer
+        minimum: 1
+        default: 7
+
+    UnusedDays:
+      name: unused_days
+      in: query
+      required: false
+      description: |
+        Unused threshold in days. Must be >= 1.
+        Must be greater than or equal to stale_days.
+        If omitted, server uses configured default.
+      schema:
+        type: integer
+        minimum: 1
+        default: 30
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    HealthResponse:
+      type: object
+      required: [status, timestamp]
+      properties:
+        status:
+          type: string
+          const: healthy
+        timestamp:
+          $ref: '#/components/schemas/UnixTimestamp'
+
+    UnixTimestamp:
+      type: integer
+      format: int64
+      description: Unix epoch seconds
+
+    TopicSummary:
+      type: object
+      required:
+        - name
+        - partition_count
+        - oldest_partition_timestamp
+        - newest_partition_timestamp
+      properties:
+        name:
+          type: string
+        partition_count:
+          type: integer
+          format: int32
+        oldest_partition_timestamp:
+          $ref: '#/components/schemas/UnixTimestamp'
+        newest_partition_timestamp:
+          $ref: '#/components/schemas/UnixTimestamp'
+
+    PaginationMeta:
+      type: object
+      required: [count, total, page, limit, has_more]
+      properties:
+        count:
+          type: integer
+          minimum: 0
+          description: Number of items in this response page
+        total:
+          type: integer
+          minimum: 0
+          description: Total matching items before pagination
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          minimum: 1
+        has_more:
+          type: boolean
+
+    ListTopicsResponse:
+      allOf:
+        - $ref: '#/components/schemas/PaginationMeta'
+        - type: object
+          required: [topics, timestamp]
+          properties:
+            topics:
+              type: array
+              items:
+                $ref: '#/components/schemas/TopicSummary'
+            timestamp:
+              $ref: '#/components/schemas/UnixTimestamp'
+
+    ListTopicsUnavailableResponse:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          required: [topics, count, total, page, limit, has_more]
+          properties:
+            topics:
+              type: array
+              items: {}
+            count:
+              type: integer
+              const: 0
+            total:
+              type: integer
+              const: 0
+            page:
+              type: integer
+              const: 1
+            limit:
+              type: integer
+              minimum: 1
+            has_more:
+              type: boolean
+              const: false
+
+    TopicPartition:
+      type: object
+      required: [partition, offset, timestamp]
+      properties:
+        partition:
+          type: integer
+          format: int32
+        offset:
+          type: integer
+          format: int64
+        timestamp:
+          $ref: '#/components/schemas/UnixTimestamp'
+
+    TopicDetailsResponse:
+      type: object
+      required:
+        - name
+        - partition_count
+        - partitions
+        - oldest_timestamp
+        - newest_timestamp
+        - last_update
+      properties:
+        name:
+          type: string
+        partition_count:
+          type: integer
+          format: int32
+        partitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopicPartition'
+        oldest_timestamp:
+          $ref: '#/components/schemas/UnixTimestamp'
+        newest_timestamp:
+          $ref: '#/components/schemas/UnixTimestamp'
+        last_update:
+          $ref: '#/components/schemas/UnixTimestamp'
+
+    ListUnusedTopicsResponse:
+      allOf:
+        - $ref: '#/components/schemas/PaginationMeta'
+        - type: object
+          required: [stale_days, unused_days, unused_topics]
+          properties:
+            stale_days:
+              type: integer
+              minimum: 1
+            unused_days:
+              type: integer
+              minimum: 1
+            unused_topics:
+              type: array
+              items:
+                $ref: '#/components/schemas/TopicSummary'
+
+    ListUnusedTopicsUnavailableResponse:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          required: [unused_topics, count, total, page, limit, has_more]
+          properties:
+            unused_topics:
+              type: array
+              items: {}
+            count:
+              type: integer
+              const: 0
+            total:
+              type: integer
+              const: 0
+            page:
+              type: integer
+              const: 1
+            limit:
+              type: integer
+              minimum: 1
+            has_more:
+              type: boolean
+              const: false
+
+    StatsResponse:
+      type: object
+      required:
+        - total_topics
+        - total_partitions
+        - unused_topics
+        - stale_partitions
+        - stale_days
+        - unused_days
+        - active_instances
+        - last_scan
+        - is_global
+        - local_instance_id
+      properties:
+        total_topics:
+          type: integer
+          minimum: 0
+        total_partitions:
+          type: integer
+          format: int32
+          minimum: 0
+        unused_topics:
+          type: integer
+          minimum: 0
+        stale_partitions:
+          type: integer
+          minimum: 0
+        stale_days:
+          type: integer
+          minimum: 1
+        unused_days:
+          type: integer
+          minimum: 1
+        active_instances:
+          type: integer
+          minimum: 0
+        last_scan:
+          $ref: '#/components/schemas/UnixTimestamp'
+        is_global:
+          type: boolean
+        local_instance_id:
+          type: string
+
+    StatsUnavailableResponse:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          required: [total_topics, total_partitions, unused_topics, stale_partitions, active_instances]
+          properties:
+            total_topics:
+              type: integer
+              const: 0
+            total_partitions:
+              type: integer
+              const: 0
+            unused_topics:
+              type: integer
+              const: 0
+            stale_partitions:
+              type: integer
+              const: 0
+            active_instances:
+              type: integer
+              const: 0
+
+    InstanceInfo:
+      type: object
+      required:
+        - instance_id
+        - last_heartbeat_at
+        - heartbeat_interval_sec
+        - is_active
+      properties:
+        instance_id:
+          type: string
+        last_heartbeat_at:
+          $ref: '#/components/schemas/UnixTimestamp'
+        heartbeat_interval_sec:
+          type: integer
+        scan_interval_sec:
+          type: integer
+        group_id:
+          type: string
+        assigned_shards:
+          type: integer
+        is_active:
+          type: boolean
+
+    InstancesResponse:
+      type: object
+      required: [instances, count, timestamp]
+      properties:
+        instances:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstanceInfo'
+        count:
+          type: integer
+          minimum: 0
+        timestamp:
+          $ref: '#/components/schemas/UnixTimestamp'
+
+    InstancesUnavailableResponse:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          required: [instances, count]
+          properties:
+            instances:
+              type: array
+              items: {}
+            count:
+              type: integer
+              const: 0
+
+    UIConfigResponse:
+      type: object
+      required: [stale_days, unused_days, page_size]
+      properties:
+        stale_days:
+          type: integer
+          minimum: 1
+        unused_days:
+          type: integer
+          minimum: 1
+        page_size:
+          type: integer
+          minimum: 1
