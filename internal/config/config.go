@@ -28,6 +28,7 @@ type Config struct {
 	InstanceID                     string
 	HTTPPort                       int
 	HTTPHost                       string
+	StaticFilesDir                 string
 	LogLevel                       string
 
 	// Staleness thresholds
@@ -81,6 +82,7 @@ func Load() (*Config, error) {
 		InstanceID:                     getString("RIPT_INSTANCE_ID", defaultInstanceID()),
 		HTTPPort:                       getInt("RIPT_HTTP_PORT", 8080),
 		HTTPHost:                       getString("RIPT_HTTP_HOST", "0.0.0.0"),
+		StaticFilesDir:                 getString("RIPT_STATIC_FILES_DIR", "./web/static"),
 		LogLevel:                       getString("RIPT_LOG_LEVEL", "info"),
 
 		StalePartitionDays:               getInt("RIPT_STALE_PARTITION_DAYS", 7),
@@ -165,6 +167,9 @@ func (c *Config) Validate() error {
 	if c.HTTPPort < 1 || c.HTTPPort > 65535 {
 		return fmt.Errorf("RIPT_HTTP_PORT must be between 1 and 65535")
 	}
+	if strings.TrimSpace(c.StaticFilesDir) == "" {
+		return fmt.Errorf("RIPT_STATIC_FILES_DIR cannot be empty")
+	}
 	if c.StalePartitionDays < 1 {
 		return fmt.Errorf("RIPT_STALE_PARTITION_DAYS must be at least 1")
 	}
@@ -190,12 +195,12 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) String() string {
-	return fmt.Sprintf("Config{Brokers: %v, ScanInterval: %dm, StateTopic: %s, ConsumerGroupID: %s, GroupSessionTimeoutMS: %d, GroupHeartbeatMS: %d, GroupRebalanceTimeoutMS: %d, TimestampSource: %s, EventHeader: %s, EventLookupTimeoutMS: %d, Partitions: %d, RF: %d, SegmentMS: %d, MinCleanableRatio: %g, StateLoadTimeout: %ds, InstanceID: %s, HTTPPort: %d, LogLevel: %s, StaleDays: %d, UnusedDays: %d, HeartbeatInterval: %ds, ConnectRetry: %ds}",
+	return fmt.Sprintf("Config{Brokers: %v, ScanInterval: %dm, StateTopic: %s, ConsumerGroupID: %s, GroupSessionTimeoutMS: %d, GroupHeartbeatMS: %d, GroupRebalanceTimeoutMS: %d, TimestampSource: %s, EventHeader: %s, EventLookupTimeoutMS: %d, Partitions: %d, RF: %d, SegmentMS: %d, MinCleanableRatio: %g, StateLoadTimeout: %ds, InstanceID: %s, HTTPPort: %d, StaticFilesDir: %s, LogLevel: %s, StaleDays: %d, UnusedDays: %d, HeartbeatInterval: %ds, ConnectRetry: %ds}",
 		c.KafkaBrokers, c.ScanIntervalMinutes, c.TrackerTopic,
 		c.TrackerConsumerGroupID, c.TrackerGroupSessionTimeoutMS, c.TrackerGroupHeartbeatMS, c.TrackerGroupRebalanceTimeoutMS,
 		c.TrackerTimestampSource, c.TrackerEventTimeHeader, c.TrackerEventLookupTimeoutMS,
 		c.TrackerTopicPartitions, c.TrackerTopicReplicationFactor, c.TrackerTopicSegmentMS, c.TrackerTopicMinCleanableRatio, c.StateLoadTimeoutSeconds,
-		c.InstanceID, c.HTTPPort, c.LogLevel, c.StalePartitionDays, c.UnusedTopicDays,
+		c.InstanceID, c.HTTPPort, c.StaticFilesDir, c.LogLevel, c.StalePartitionDays, c.UnusedTopicDays,
 		c.InstanceHeartbeatIntervalSeconds, c.KafkaConnectRetrySeconds)
 }
 

@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,6 +21,7 @@ func testServer() *Server {
 			MaxPageSize:        500,
 			StalePartitionDays: 7,
 			UnusedTopicDays:    30,
+			StaticFilesDir:     "./web/static",
 		},
 	}
 }
@@ -211,6 +214,50 @@ func TestHandleUIConfig(t *testing.T) {
 	}
 	if payload.PageSize != s.cfg.DefaultPageSize {
 		t.Fatalf("expected page_size %d, got %d", s.cfg.DefaultPageSize, payload.PageSize)
+	}
+}
+
+func TestStaticFilesDirIsConfigurable(t *testing.T) {
+	staticDir := t.TempDir()
+	dashboardPath := filepath.Join(staticDir, "dashboard.html")
+	assetPath := filepath.Join(staticDir, "test.txt")
+
+	if err := os.WriteFile(dashboardPath, []byte("custom-dashboard"), 0o644); err != nil {
+		t.Fatalf("failed to write dashboard fixture: %v", err)
+	}
+	if err := os.WriteFile(assetPath, []byte("custom-asset"), 0o644); err != nil {
+		t.Fatalf("failed to write asset fixture: %v", err)
+	}
+
+	s := &Server{
+		cfg: &config.Config{
+			DefaultPageSize:    50,
+			MaxPageSize:        500,
+			StalePartitionDays: 7,
+			UnusedTopicDays:    30,
+			StaticFilesDir:     staticDir,
+		},
+	}
+	s.Initialize()
+
+	dashboardResp := httptest.NewRecorder()
+	dashboardReq := httptest.NewRequest("GET", "/", nil)
+	s.router.ServeHTTP(dashboardResp, dashboardReq)
+	if dashboardResp.Code != 200 {
+		t.Fatalf("expected dashboard status 200, got %d", dashboardResp.Code)
+	}
+	if !strings.Contains(dashboardResp.Body.String(), "custom-dashboard") {
+		t.Fatalf("expected dashboard body to contain custom content, got %q", dashboardResp.Body.String())
+	}
+
+	assetResp := httptest.NewRecorder()
+	assetReq := httptest.NewRequest("GET", "/assets/test.txt", nil)
+	s.router.ServeHTTP(assetResp, assetReq)
+	if assetResp.Code != 200 {
+		t.Fatalf("expected asset status 200, got %d", assetResp.Code)
+	}
+	if strings.TrimSpace(assetResp.Body.String()) != "custom-asset" {
+		t.Fatalf("expected asset body custom-asset, got %q", assetResp.Body.String())
 	}
 }
 

@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -72,7 +73,7 @@ func (s *Server) setupRoutes() {
 	s.router.GET("/api/ui-config", s.handleUIConfig)
 
 	// Static files and dashboard
-	s.router.Static("/assets", "./web/static")
+	s.router.Static("/assets", s.cfg.StaticFilesDir)
 	s.router.GET("/", s.handleDashboard)
 	s.router.HEAD("/", s.handleDashboard)
 }
@@ -343,7 +344,7 @@ func (s *Server) handleUIConfig(c *gin.Context) {
 }
 
 func (s *Server) handleDashboard(c *gin.Context) {
-	c.File("./web/static/dashboard.html")
+	c.File(filepath.Join(s.cfg.StaticFilesDir, "dashboard.html"))
 }
 
 func (s *Server) parsePagination(c *gin.Context) (pagination, error) {
