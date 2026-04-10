@@ -185,6 +185,12 @@ func (sm *StateManager) EnsureTrackerTopic(ctx context.Context) error {
 	deadline := time.Now().Add(30 * time.Second)
 	pollInterval := 500 * time.Millisecond
 	for {
+		// Check for cancellation before issuing broker calls so SIGTERM during
+		// startup unblocks immediately without waiting for a network round-trip.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		partitions, partErr := sm.client.GetTopicPartitions(ctx, sm.trackerTopic)
 		if partErr == nil && len(partitions) > 0 {
 			topicConfigs, cfgErr := sm.client.GetTopicConfigs(ctx, sm.trackerTopic, []string{

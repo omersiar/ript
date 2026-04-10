@@ -154,7 +154,19 @@ func (b *WorkloadBalancer) Stop() {
 	b.mu.Unlock()
 
 	if client != nil {
-		client.Close()
+		// client.Close() sends a LeaveGroup request which can block indefinitely
+		// when the broker is unreachable. Run it in a goroutine with a hard
+		// deadline so Stop() is never stuck behind a down broker.
+		closeDone := make(chan struct{})
+		go func() {
+			client.Close()
+			close(closeDone)
+		}()
+		select {
+		case <-closeDone:
+		case <-time.After(5 * time.Second):
+			logging.Warn("Workload balancer client close timed out (broker may be unreachable)")
+		}
 	}
 
 	b.wg.Wait()

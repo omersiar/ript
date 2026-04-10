@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -96,7 +97,28 @@ func main() {
 		InstanceHeartbeatSeconds: cfg.InstanceHeartbeatIntervalSeconds,
 	})
 
+	// Register signal handler BEFORE any potentially blocking startup call.
+	// This ensures SIGTERM/SIGINT is always responsive — whether the signal
+	// arrives during startup (e.g. broker unreachable) or at runtime.
+	// The goroutine below cancels the root context so that blocking broker
+	// operations (EnsureTrackerTopic, WaitForAssignments, etc.) unblock promptly.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		select {
+		case sig := <-sigChan:
+			logging.Info("Shutdown signal received (%v), stopping...", sig)
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
 	if err := topicTracker.Start(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			// SIGTERM arrived during startup; perform a clean stop and exit.
+			topicTracker.Stop()
+			return
+		}
 		logging.Fatal("Failed to start topic tracker: %v", err)
 	}
 
@@ -111,18 +133,15 @@ func main() {
 		}
 	}()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
 	select {
-	case <-sigChan:
-		logging.Info("Shutdown signal received, stopping...")
-	case <-serverErrChan:
-		logging.Error("Server error, initiating shutdown...")
+	case <-ctx.Done():
+		// Signal was received — already logged by the goroutine above.
+	case err := <-serverErrChan:
+		logging.Error("Server error, initiating shutdown: %v", err)
+		cancel()
 	}
 
 	topicTracker.Stop()
-	cancel()
 	logging.Info("Shutdown complete")
 }
 
