@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omersiar/ript/internal/models"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -125,5 +126,34 @@ func TestWorkloadBalancerStopReturnsWithinTimeoutWhenBrokerDown(t *testing.T) {
 		// passed — Stop() did not hang
 	case <-time.After(7 * time.Second):
 		t.Fatal("WorkloadBalancer.Stop() blocked for >7 seconds with unreachable broker (close timeout not working)")
+	}
+}
+
+func TestSaveSnapshotReturnsOnCancelledContext(t *testing.T) {
+	sm := &StateManager{trackerTopic: "ript-state"}
+
+	snapshot := &models.ClusterSnapshot{
+		Topics: map[string]*models.TopicStatus{
+			"orders": {
+				Name: "orders",
+				Partitions: map[int32]*models.PartitionInfo{
+					0: {Partition: 0, Offset: 1, Timestamp: time.Now().UTC().Unix()},
+				},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	err := sm.SaveSnapshot(ctx, snapshot)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("SaveSnapshot took too long with cancelled context: %v", elapsed)
 	}
 }

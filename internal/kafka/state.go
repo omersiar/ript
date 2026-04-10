@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/omersiar/ript/internal/logging"
@@ -238,37 +240,103 @@ func (sm *StateManager) EnsureTrackerTopic(ctx context.Context) error {
 // Batching all records in one ProduceSync call is significantly more efficient
 // than per-topic calls for large clusters.
 func (sm *StateManager) SaveSnapshot(ctx context.Context, snapshot *models.ClusterSnapshot) error {
-	records := make([]*kgo.Record, 0, len(snapshot.Topics))
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
+	type snapshotJob struct {
+		topicName   string
+		topicStatus *models.TopicStatus
+	}
+
+	topicJobs := make([]snapshotJob, 0, len(snapshot.Topics))
 	for topicName, topicStatus := range snapshot.Topics {
-		state := &TopicState{
-			Version:    1,
-			Topic:      topicName,
-			Timestamp:  time.Now().UTC().Unix(),
-			Partitions: make(map[int32]PartitionState, len(topicStatus.Partitions)),
+		topicJobs = append(topicJobs, snapshotJob{topicName: topicName, topicStatus: topicStatus})
+	}
+
+	records := make([]*kgo.Record, 0, len(topicJobs))
+	if len(topicJobs) > 0 {
+		workers := runtime.GOMAXPROCS(0)
+		if workers < 1 {
+			workers = 1
 		}
-		for partID, partInfo := range topicStatus.Partitions {
-			state.Partitions[partID] = PartitionState{
-				Partition: partID,
-				Offset:    partInfo.Offset,
-				Timestamp: partInfo.Timestamp,
+		if workers > len(topicJobs) {
+			workers = len(topicJobs)
+		}
+
+		jobCh := make(chan snapshotJob)
+		recCh := make(chan *kgo.Record, len(topicJobs))
+
+		var wg sync.WaitGroup
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for job := range jobCh {
+					if err := ctx.Err(); err != nil {
+						return
+					}
+
+					state := &TopicState{
+						Version:    1,
+						Topic:      job.topicName,
+						Timestamp:  time.Now().UTC().Unix(),
+						Partitions: make(map[int32]PartitionState, len(job.topicStatus.Partitions)),
+					}
+					for partID, partInfo := range job.topicStatus.Partitions {
+						state.Partitions[partID] = PartitionState{
+							Partition: partID,
+							Offset:    partInfo.Offset,
+							Timestamp: partInfo.Timestamp,
+						}
+					}
+
+					data, err := json.Marshal(state)
+					if err != nil {
+						logging.Warn("Failed to marshal state for topic %s: %v", job.topicName, err)
+						continue
+					}
+
+					record := &kgo.Record{
+						Topic: sm.trackerTopic,
+						Key:   []byte(job.topicName),
+						Value: data,
+					}
+
+					select {
+					case recCh <- record:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+		}
+
+		for _, job := range topicJobs {
+			select {
+			case jobCh <- job:
+			case <-ctx.Done():
+				close(jobCh)
+				wg.Wait()
+				close(recCh)
+				return ctx.Err()
 			}
 		}
+		close(jobCh)
+		wg.Wait()
+		close(recCh)
 
-		data, err := json.Marshal(state)
-		if err != nil {
-			logging.Warn("Failed to marshal state for topic %s: %v", topicName, err)
-			continue
+		for record := range recCh {
+			records = append(records, record)
 		}
-		records = append(records, &kgo.Record{
-			Topic: sm.trackerTopic,
-			Key:   []byte(topicName),
-			Value: data,
-		})
 	}
 
 	if len(records) == 0 {
 		return nil
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	results := sm.client.client.ProduceSync(ctx, records...)

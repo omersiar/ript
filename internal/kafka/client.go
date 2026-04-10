@@ -201,8 +201,25 @@ func (c *Client) NextClientID(role string) string {
 }
 
 func (c *Client) Close() error {
-	c.client.Flush(context.Background())
-	c.client.Close()
+	const flushTimeout = 5 * time.Second
+	const closeTimeout = 5 * time.Second
+
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), flushTimeout)
+	defer flushCancel()
+	c.client.Flush(flushCtx)
+
+	closeDone := make(chan struct{})
+	go func() {
+		c.client.Close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+	case <-time.After(closeTimeout):
+		logging.Warn("Kafka client close timed out after %s", closeTimeout)
+	}
+
 	return nil
 }
 
