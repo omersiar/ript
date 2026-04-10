@@ -423,7 +423,8 @@ func (c *Client) CreateTopicsIfNotExist(ctx context.Context, topics []string, pa
 		})
 	}
 
-	req := &kmsg.CreateTopicsRequest{Topics: reqTopics}
+	req := kmsg.NewPtrCreateTopicsRequest()
+	req.Topics = reqTopics
 	resp, err := c.client.Request(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to create topics: %w", err)
