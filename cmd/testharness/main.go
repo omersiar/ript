@@ -218,9 +218,18 @@ func createTopics(ctx context.Context, client *kafka.Client, opts *options) erro
 		topics = append(topics, topicName(opts.topicPrefix, i))
 	}
 
+	const maxPartitionsPerCreateRequest = 7500
+	maxTopicsByPartitions := maxPartitionsPerCreateRequest / opts.partitions
+	if maxTopicsByPartitions < 1 {
+		return fmt.Errorf("partitions per topic (%d) exceed broker per-request limit of %d", opts.partitions, maxPartitionsPerCreateRequest)
+	}
+
 	batchSize := opts.createWorkers * 64
 	if batchSize < 100 {
 		batchSize = 100
+	}
+	if batchSize > maxTopicsByPartitions {
+		batchSize = maxTopicsByPartitions
 	}
 
 	for start := 0; start < len(topics); start += batchSize {
