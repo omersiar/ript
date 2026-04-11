@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -19,120 +18,6 @@ type Client struct {
 	client *kgo.Client
 	config *ClientConfig
 	idSeq  uint64
-}
-
-type HeaderLookupTargets map[string]map[int32]int64
-
-// GetLatestTimestampsFromHeadersBatch reads specific record offsets across
-// topics/partitions in a single consumer pass and extracts header timestamps.
-func (c *Client) GetLatestTimestampsFromHeadersBatch(ctx context.Context, targets HeaderLookupTargets, headerKey string) (map[string]map[int32]time.Time, error) {
-	if len(targets) == 0 {
-		return map[string]map[int32]time.Time{}, nil
-	}
-
-	lookupStartedAt := time.Now()
-
-	consumeMap := make(map[string]map[int32]kgo.Offset, len(targets))
-	targetOffsetsByTopic := make(map[string]map[int32]int64, len(targets))
-	totalTargets := 0
-	for topic, partitions := range targets {
-		for partition, targetOffset := range partitions {
-			if targetOffset < 0 {
-				continue
-			}
-			if _, ok := consumeMap[topic]; !ok {
-				consumeMap[topic] = make(map[int32]kgo.Offset)
-				targetOffsetsByTopic[topic] = make(map[int32]int64)
-			}
-			consumeMap[topic][partition] = kgo.NewOffset().At(targetOffset)
-			targetOffsetsByTopic[topic][partition] = targetOffset
-			totalTargets++
-		}
-	}
-
-	if totalTargets == 0 {
-		return map[string]map[int32]time.Time{}, nil
-	}
-
-	consumerOpts := []kgo.Opt{
-		kgo.SeedBrokers(c.config.Brokers...),
-		kgo.ClientID(c.nextClientID("header-lookup")),
-		kgo.ConsumePartitions(consumeMap),
-		kgo.FetchMaxBytes(10 * 1024 * 1024),
-		kgo.FetchMaxWait(250 * time.Millisecond),
-		// Disable incremental fetch sessions: this is a short-lived client that
-		// reads a handful of offsets and closes. Without this, the broker's
-		// session cache receives zero-UUID "forget" entries on Close() which
-		// trigger a NullPointerException in Kafka 2.8.x (FetchSession.scala:184).
-		kgo.DisableFetchSessions(),
-	}
-	consumerOpts = append(consumerOpts, c.config.AuthOpts...)
-	consumerClient, err := kgo.NewClient(consumerOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create header lookup consumer client: %w", err)
-	}
-	defer consumerClient.Close()
-
-	timestamps := make(map[string]map[int32]time.Time, len(targetOffsetsByTopic))
-	for topic := range targetOffsetsByTopic {
-		timestamps[topic] = make(map[int32]time.Time)
-	}
-
-	pollCycles := 0
-	resolved := 0
-	for resolved < totalTargets {
-		pollCycles++
-		fetches := consumerClient.PollFetches(ctx)
-		if fetches.IsClientClosed() {
-			break
-		}
-		if err := ctx.Err(); err != nil {
-			break
-		}
-
-		for _, fe := range fetches.Errors() {
-			if fe.Err != nil && fe.Err != context.Canceled && fe.Err != context.DeadlineExceeded {
-				return nil, fmt.Errorf("failed to fetch header records for %s partition %d: %w", fe.Topic, fe.Partition, fe.Err)
-			}
-		}
-
-		fetches.EachPartition(func(p kgo.FetchTopicPartition) {
-			topicTargets, ok := targetOffsetsByTopic[p.Topic]
-			if !ok {
-				return
-			}
-
-			targetOffset, ok := topicTargets[p.Partition]
-			if !ok {
-				return
-			}
-
-			p.EachRecord(func(record *kgo.Record) {
-				if _, exists := timestamps[p.Topic][p.Partition]; exists {
-					return
-				}
-				if record.Offset != targetOffset {
-					return
-				}
-
-				ts, ok := timestampFromHeaders(record.Headers, headerKey)
-				if ok {
-					timestamps[p.Topic][p.Partition] = ts
-					resolved++
-				}
-			})
-		})
-	}
-
-	totalResolved := 0
-	for _, topicTimestamps := range timestamps {
-		totalResolved += len(topicTimestamps)
-	}
-
-	logging.Info("Header timestamp lookup batch completed in %s: target_topics=%d target_partitions=%d resolved=%d poll_cycles=%d",
-		time.Since(lookupStartedAt), len(targetOffsetsByTopic), totalTargets, totalResolved, pollCycles)
-
-	return timestamps, nil
 }
 
 type ClientConfig struct {
@@ -636,32 +521,4 @@ func isSystemTopic(topic string) bool {
 		return false
 	}
 	return topic[0] == '_'
-}
-
-func timestampFromHeaders(headers []kgo.RecordHeader, headerKey string) (time.Time, bool) {
-	for _, h := range headers {
-		if h.Key != headerKey {
-			continue
-		}
-
-		raw := strings.TrimSpace(string(h.Value))
-		if raw == "" {
-			return time.Time{}, false
-		}
-
-		if ts, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			if ts > 100000000000 {
-				return time.UnixMilli(ts).UTC(), true
-			}
-			return time.Unix(ts, 0).UTC(), true
-		}
-
-		if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
-			return parsed.UTC(), true
-		}
-
-		return time.Time{}, false
-	}
-
-	return time.Time{}, false
 }

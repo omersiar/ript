@@ -89,9 +89,6 @@ func main() {
 	}
 
 	topicTracker := tracker.NewWithOptions(kafkaClient, stateManager, workloadBalancer, cfg.ScanIntervalMinutes, tracker.Options{
-		TimestampSource:          cfg.TrackerTimestampSource,
-		EventTimeHeader:          cfg.TrackerEventTimeHeader,
-		EventLookupTO:            time.Duration(cfg.TrackerEventLookupTimeoutMS) * time.Millisecond,
 		InstanceID:               cfg.InstanceID,
 		ConsumerGroupID:          cfg.TrackerConsumerGroupID,
 		InstanceHeartbeatSeconds: cfg.InstanceHeartbeatIntervalSeconds,

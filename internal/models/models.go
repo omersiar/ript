@@ -2,6 +2,7 @@ package models
 
 import (
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -47,50 +48,29 @@ type Duration struct {
 }
 
 func (d Duration) String() string {
-	if d.Days > 0 {
-		return d.formatWithDays()
+	units := []struct {
+		val  int
+		name string
+	}{
+		{d.Days, "day"},
+		{d.Hours, "hour"},
+		{d.Minutes, "minute"},
+		{d.Seconds, "second"},
 	}
-	if d.Hours > 0 {
-		return d.formatWithHours()
-	}
-	if d.Minutes > 0 {
-		return d.formatWithMinutes()
-	}
-	return d.formatWithSeconds()
-}
 
-func (d Duration) formatWithDays() string {
-	if d.Days == 1 && d.Hours == 0 {
-		return "1 day"
+	var parts []string
+	for _, u := range units {
+		if u.val > 0 {
+			parts = append(parts, d.pluralize(u.val, u.name))
+		}
+		if len(parts) == 2 {
+			break
+		}
 	}
-	if d.Hours == 0 {
-		return d.pluralize(d.Days, "day")
+	if len(parts) == 0 {
+		return d.pluralize(0, "second")
 	}
-	return d.pluralize(d.Days, "day") + " " + d.pluralize(d.Hours, "hour")
-}
-
-func (d Duration) formatWithHours() string {
-	if d.Hours == 1 && d.Minutes == 0 {
-		return "1 hour"
-	}
-	if d.Minutes == 0 {
-		return d.pluralize(d.Hours, "hour")
-	}
-	return d.pluralize(d.Hours, "hour") + " " + d.pluralize(d.Minutes, "minute")
-}
-
-func (d Duration) formatWithMinutes() string {
-	if d.Minutes == 1 && d.Seconds == 0 {
-		return "1 minute"
-	}
-	if d.Seconds == 0 {
-		return d.pluralize(d.Minutes, "minute")
-	}
-	return d.pluralize(d.Minutes, "minute") + " " + d.pluralize(d.Seconds, "second")
-}
-
-func (d Duration) formatWithSeconds() string {
-	return d.pluralize(d.Seconds, "second")
+	return strings.Join(parts, " ")
 }
 
 func (d Duration) pluralize(count int, unit string) string {

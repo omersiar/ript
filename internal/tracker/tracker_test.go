@@ -12,7 +12,7 @@ import (
 func TestResolvePartitionTimestampWithoutPreviousState(t *testing.T) {
 	now := time.Date(2026, time.March, 28, 12, 0, 0, 0, time.UTC)
 
-	resolved := resolvePartitionTimestamp(nil, 100, now.Unix(), time.Time{}, false)
+	resolved := resolvePartitionTimestamp(nil, 100, now.Unix())
 
 	if resolved != now.Unix() {
 		t.Fatalf("expected timestamp %v, got %v", now, resolved)
@@ -24,7 +24,7 @@ func TestResolvePartitionTimestampPreservesTimestampForUnchangedOffset(t *testin
 	previousTimestamp := now.Add(-6 * time.Hour)
 	previous := &models.PartitionInfo{Offset: 100, Timestamp: previousTimestamp.Unix()}
 
-	resolved := resolvePartitionTimestamp(previous, 100, now.Unix(), now.Add(-24*time.Hour), true)
+	resolved := resolvePartitionTimestamp(previous, 100, now.Unix())
 
 	if resolved != previousTimestamp.Unix() {
 		t.Fatalf("expected previous timestamp %v, got %v", previousTimestamp, resolved)
@@ -36,7 +36,7 @@ func TestResolvePartitionTimestampResetsTimestampForChangedOffset(t *testing.T) 
 	previousTimestamp := now.Add(-48 * time.Hour)
 	previous := &models.PartitionInfo{Offset: 100, Timestamp: previousTimestamp.Unix()}
 
-	resolved := resolvePartitionTimestamp(previous, 101, now.Unix(), time.Time{}, false)
+	resolved := resolvePartitionTimestamp(previous, 101, now.Unix())
 
 	if resolved != now.Unix() {
 		t.Fatalf("expected timestamp to reset to %v, got %v", now, resolved)
@@ -48,33 +48,10 @@ func TestResolvePartitionTimestampPreservesTimestampWhenOffsetDecreases(t *testi
 	previousTimestamp := now.Add(-72 * time.Hour)
 	previous := &models.PartitionInfo{Offset: 100, Timestamp: previousTimestamp.Unix()}
 
-	resolved := resolvePartitionTimestamp(previous, 95, now.Unix(), time.Time{}, false)
+	resolved := resolvePartitionTimestamp(previous, 95, now.Unix())
 
 	if resolved != previousTimestamp.Unix() {
 		t.Fatalf("expected previous timestamp %v, got %v", previousTimestamp, resolved)
-	}
-}
-
-func TestResolvePartitionTimestampUsesHeaderTimestampWhenOffsetChanges(t *testing.T) {
-	now := time.Date(2026, time.March, 28, 12, 0, 0, 0, time.UTC)
-	historicalEventTime := now.Add(-20 * 24 * time.Hour)
-	previous := &models.PartitionInfo{Offset: 100, Timestamp: now.Add(-48 * time.Hour).Unix()}
-
-	resolved := resolvePartitionTimestamp(previous, 101, now.Unix(), historicalEventTime, true)
-
-	if resolved != historicalEventTime.Unix() {
-		t.Fatalf("expected header timestamp %v, got %v", historicalEventTime, resolved)
-	}
-}
-
-func TestResolvePartitionTimestampUsesHeaderTimestampWithoutPreviousState(t *testing.T) {
-	now := time.Date(2026, time.March, 28, 12, 0, 0, 0, time.UTC)
-	historicalEventTime := now.Add(-12 * time.Hour)
-
-	resolved := resolvePartitionTimestamp(nil, 1, now.Unix(), historicalEventTime, true)
-
-	if resolved != historicalEventTime.Unix() {
-		t.Fatalf("expected header timestamp %v, got %v", historicalEventTime, resolved)
 	}
 }
 

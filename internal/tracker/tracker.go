@@ -20,9 +20,6 @@ type TopicTracker struct {
 	stateManager      *kafka.StateManager
 	workloadBalancer  *kafka.WorkloadBalancer
 	scanInterval      time.Duration
-	timestampSource   string
-	eventTimeHeader   string
-	eventLookupTO     time.Duration
 	instanceID        string
 	consumerGroupID   string
 	heartbeatInterval time.Duration
@@ -30,6 +27,7 @@ type TopicTracker struct {
 	activeInstances   atomic.Pointer[map[string]models.InstanceInfo]
 	stopChan          chan struct{}
 	wg                sync.WaitGroup
+	scanMu            sync.Mutex
 	// globalMu guards globalTopics. globalSnapshot is rebuilt atomically after
 	// every merge so readers never need to hold globalMu.
 	globalMu       sync.RWMutex
@@ -39,9 +37,6 @@ type TopicTracker struct {
 }
 
 type Options struct {
-	TimestampSource          string
-	EventTimeHeader          string
-	EventLookupTO            time.Duration
 	InstanceID               string
 	ConsumerGroupID          string
 	InstanceHeartbeatSeconds int
@@ -53,24 +48,7 @@ type scanTopicData struct {
 	offsets    map[int32]int64
 }
 
-func New(kafkaClient *kafka.Client, stateManager *kafka.StateManager, workloadBalancer *kafka.WorkloadBalancer, scanIntervalMinutes int) *TopicTracker {
-	return NewWithOptions(kafkaClient, stateManager, workloadBalancer, scanIntervalMinutes, Options{})
-}
-
 func NewWithOptions(kafkaClient *kafka.Client, stateManager *kafka.StateManager, workloadBalancer *kafka.WorkloadBalancer, scanIntervalMinutes int, opts Options) *TopicTracker {
-	timestampSource := opts.TimestampSource
-	if timestampSource == "" {
-		timestampSource = "offset"
-	}
-	eventTimeHeader := opts.EventTimeHeader
-	if eventTimeHeader == "" {
-		eventTimeHeader = "x-event-time-ms"
-	}
-	eventLookupTO := opts.EventLookupTO
-	if eventLookupTO <= 0 {
-		eventLookupTO = 3 * time.Second
-	}
-
 	heartbeatInterval := time.Duration(opts.InstanceHeartbeatSeconds) * time.Second
 	if heartbeatInterval <= 0 {
 		heartbeatInterval = 30 * time.Second
@@ -81,9 +59,6 @@ func NewWithOptions(kafkaClient *kafka.Client, stateManager *kafka.StateManager,
 		stateManager:      stateManager,
 		workloadBalancer:  workloadBalancer,
 		scanInterval:      time.Duration(scanIntervalMinutes) * time.Minute,
-		timestampSource:   timestampSource,
-		eventTimeHeader:   eventTimeHeader,
-		eventLookupTO:     eventLookupTO,
 		instanceID:        opts.InstanceID,
 		consumerGroupID:   opts.ConsumerGroupID,
 		heartbeatInterval: heartbeatInterval,
@@ -211,7 +186,13 @@ func (t *TopicTracker) scanLoop(ctx context.Context) {
 		case <-t.stopChan:
 			return
 		case <-ticker.C:
-			if err := t.scanTopics(ctx); err != nil {
+			if !t.scanMu.TryLock() {
+				logging.Warn("Skipping scan cycle: previous scan still in progress")
+				continue
+			}
+			err := t.scanTopics(ctx)
+			t.scanMu.Unlock()
+			if err != nil {
 				logging.Error("Error during scan: %v", err)
 			}
 		}
@@ -315,8 +296,6 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 		})
 	}
 
-	headerTimestampsByTopic := t.lookupHeaderTimestampsForChangedPartitions(ctx, previousSnapshot, topicData)
-
 	for _, meta := range topicData {
 		topicStatus := &models.TopicStatus{
 			Name:           meta.name,
@@ -324,8 +303,6 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 			Partitions:     make(map[int32]*models.PartitionInfo),
 			LastUpdate:     scanTime,
 		}
-
-		headerTimestamps := headerTimestampsByTopic[meta.name]
 
 		var oldestTimestamp int64
 		var newestTimestamp int64
@@ -339,8 +316,7 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 			processedPartitions++
 
 			previous := previousPartitionInfo(previousSnapshot, meta.name, partID)
-			headerTimestamp, hasHeaderTimestamp := headerTimestamps[partID]
-			partInfo := buildPartitionInfo(partID, offset, previous, scanTime, headerTimestamp, hasHeaderTimestamp)
+			partInfo := buildPartitionInfo(partID, offset, previous, scanTime)
 
 			topicStatus.Partitions[partID] = partInfo
 
@@ -417,9 +393,6 @@ func (t *TopicTracker) syncGlobalFromState(snapshot *kafka.StateSnapshot) {
 func (t *TopicTracker) applyGlobalRecord(key string, value []byte) {
 	if instanceID, ok := strings.CutPrefix(key, "tracker-instance:"); ok {
 		t.applyHeartbeatRecord(instanceID, value)
-		return
-	}
-	if key == "tracker-owner" {
 		return
 	}
 
@@ -632,8 +605,8 @@ func previousPartitionInfo(snapshot *models.ClusterSnapshot, topicName string, p
 	return previousTopic.Partitions[partID]
 }
 
-func buildPartitionInfo(partitionID int32, currentOffset int64, previous *models.PartitionInfo, now int64, headerTimestamp time.Time, hasHeaderTimestamp bool) *models.PartitionInfo {
-	timestamp := resolvePartitionTimestamp(previous, currentOffset, now, headerTimestamp, hasHeaderTimestamp)
+func buildPartitionInfo(partitionID int32, currentOffset int64, previous *models.PartitionInfo, now int64) *models.PartitionInfo {
+	timestamp := resolvePartitionTimestamp(previous, currentOffset, now)
 	age := models.CalculateDuration(time.Unix(timestamp, 0).UTC())
 
 	return &models.PartitionInfo{
@@ -644,74 +617,17 @@ func buildPartitionInfo(partitionID int32, currentOffset int64, previous *models
 	}
 }
 
-func resolvePartitionTimestamp(previous *models.PartitionInfo, currentOffset int64, now int64, headerTimestamp time.Time, hasHeaderTimestamp bool) int64 {
+func resolvePartitionTimestamp(previous *models.PartitionInfo, currentOffset int64, now int64) int64 {
 	if previous == nil || previous.Timestamp == 0 {
-		if hasHeaderTimestamp && !headerTimestamp.IsZero() {
-			return headerTimestamp.UTC().Unix()
-		}
 		return now
 	}
 	// Reset timestamp only on forward offset movement (new data). If offset is
 	// unchanged or moves backwards (transient metadata/leader effects), preserve
 	// the previous timestamp to keep age monotonic.
 	if currentOffset > previous.Offset {
-		if hasHeaderTimestamp && !headerTimestamp.IsZero() {
-			return headerTimestamp.UTC().Unix()
-		}
 		return now
 	}
 	return previous.Timestamp
-}
-
-func (t *TopicTracker) lookupHeaderTimestampsForChangedPartitions(ctx context.Context, previousSnapshot *models.ClusterSnapshot, topics []scanTopicData) map[string]map[int32]time.Time {
-	if t.timestampSource != "header" {
-		return nil
-	}
-
-	lookupTargets := make(kafka.HeaderLookupTargets)
-	changedPartitions := 0
-	for _, topic := range topics {
-		for _, partID := range topic.partitions {
-			offset, ok := topic.offsets[partID]
-			if !ok || offset <= 0 {
-				continue
-			}
-
-			previous := previousPartitionInfo(previousSnapshot, topic.name, partID)
-			if previous == nil || previous.Offset != offset {
-				if _, ok := lookupTargets[topic.name]; !ok {
-					lookupTargets[topic.name] = make(map[int32]int64)
-				}
-				lookupTargets[topic.name][partID] = offset - 1
-				changedPartitions++
-			}
-		}
-	}
-
-	if changedPartitions == 0 {
-		return nil
-	}
-
-	lookupStartedAt := time.Now()
-
-	lookupCtx, cancel := context.WithTimeout(ctx, t.eventLookupTO)
-	defer cancel()
-
-	timestamps, err := t.kafkaClient.GetLatestTimestampsFromHeadersBatch(lookupCtx, lookupTargets, t.eventTimeHeader)
-	if err != nil {
-		logging.Warn("Failed to lookup header timestamps for scan: %v", err)
-		return nil
-	}
-
-	resolved := 0
-	for _, topicTimestamps := range timestamps {
-		resolved += len(topicTimestamps)
-	}
-
-	logging.Info("Header lookup completed for scan in %s: changed_topics=%d changed_partitions=%d resolved_timestamps=%d",
-		time.Since(lookupStartedAt), len(lookupTargets), changedPartitions, resolved)
-
-	return timestamps
 }
 
 func (t *TopicTracker) GetTopic(name string) *models.TopicStatus {

@@ -276,10 +276,6 @@ func (b *WorkloadBalancer) WaitForAssignments(ctx context.Context, timeout time.
 }
 
 func (b *WorkloadBalancer) OwnsTopicPartition(topic string, partition int32) bool {
-	if b == nil {
-		return true
-	}
-
 	shard := workloadShard(topic, b.trackerPartitions)
 	b.mu.RLock()
 	_, ok := b.assignedShards[shard]

@@ -2,14 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"math"
 	"math/rand"
-	"net/http"
-	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -32,31 +29,13 @@ type options struct {
 	inactiveTopicRatio float64
 	eventsPerPartMin   int
 	eventsPerPartMax   int
-	headerKey          string
 	seed               int64
-
-	apiURL        string
-	thresholdDays int
-	assertTimeout time.Duration
-	assertPoll    time.Duration
-	skipAssert    bool
 }
 
 type partitionPlan struct {
 	topic      string
 	partition  int32
 	timestamps []time.Time
-}
-
-type topicExpectation struct {
-	newestPartitionTS time.Time
-	isUnused          bool
-}
-
-type statsResponse struct {
-	TotalTopics     int `json:"total_topics"`
-	UnusedTopics    int `json:"unused_topics"`
-	StalePartitions int `json:"stale_partitions"`
 }
 
 var realisticTopicDomains = []string{
@@ -120,29 +99,14 @@ func main() {
 		fatalf("topic creation failed: %v", err)
 	}
 
-	plans, expectedUnused, err := buildSimulationPlans(opts, randSrc)
-	if err != nil {
-		fatalf("failed to build simulation plans: %v", err)
-	}
-	fmt.Printf("[harness] generated simulation plan: %d partitions, expected unused topics at threshold %d days = %d\n", len(plans), opts.thresholdDays, expectedUnused)
+	plans := buildPlans(opts, randSrc)
+	fmt.Printf("[harness] generated plan: %d partition plans\n", len(plans))
 
 	if err := producePlans(ctx, opts, plans); err != nil {
-		fatalf("failed while producing simulation events: %v", err)
+		fatalf("failed while producing events: %v", err)
 	}
 
-	fmt.Println("[harness] production completed")
-
-	if opts.skipAssert {
-		fmt.Println("[harness] skipping API assertion (--skip-assert)")
-		return
-	}
-
-	fmt.Println("[harness] waiting for tracker scan and validating API counts")
-	if err := assertTrackerCounts(opts, expectedUnused); err != nil {
-		fatalf("assertion failed: %v", err)
-	}
-
-	fmt.Println("[harness] success: tracker counts match expected compressed-time simulation")
+	fmt.Println("[harness] done")
 }
 
 func parseFlags() (*options, error) {
@@ -156,18 +120,11 @@ func parseFlags() (*options, error) {
 	flag.IntVar(&opts.replicationFactor, "replication-factor", 1, "topic replication factor")
 	flag.IntVar(&opts.createWorkers, "create-workers", 32, "parallel workers for topic creation")
 
-	flag.IntVar(&opts.virtualDays, "virtual-days", 180, "historical window to simulate in virtual days")
-	flag.Float64Var(&opts.inactiveTopicRatio, "inactive-ratio", 0.25, "ratio of topics that should end as unused")
-	flag.IntVar(&opts.eventsPerPartMin, "events-per-partition-min", 2, "minimum number of events generated per partition")
-	flag.IntVar(&opts.eventsPerPartMax, "events-per-partition-max", 5, "maximum number of events generated per partition")
-	flag.StringVar(&opts.headerKey, "header-key", "x-event-time-ms", "message header key carrying event timestamp as Unix seconds")
+	flag.IntVar(&opts.virtualDays, "virtual-days", 180, "historical window to simulate in days")
+	flag.Float64Var(&opts.inactiveTopicRatio, "inactive-ratio", 0.25, "ratio of topics that should appear inactive")
+	flag.IntVar(&opts.eventsPerPartMin, "events-per-partition-min", 2, "minimum events per partition")
+	flag.IntVar(&opts.eventsPerPartMax, "events-per-partition-max", 5, "maximum events per partition")
 	flag.Int64Var(&opts.seed, "seed", 20260328, "random seed for deterministic runs")
-
-	flag.StringVar(&opts.apiURL, "api-url", "http://localhost:8080", "tracker API base URL")
-	flag.IntVar(&opts.thresholdDays, "threshold-days", 30, "unused threshold days to compare against")
-	flag.DurationVar(&opts.assertTimeout, "assert-timeout", 5*time.Minute, "maximum wait for tracker to surface expected counts")
-	flag.DurationVar(&opts.assertPoll, "assert-poll-interval", 5*time.Second, "poll interval for stats assertion")
-	flag.BoolVar(&opts.skipAssert, "skip-assert", false, "skip tracker API assertion")
 
 	flag.Parse()
 
@@ -195,18 +152,6 @@ func parseFlags() (*options, error) {
 	}
 	if opts.eventsPerPartMin < 1 || opts.eventsPerPartMax < opts.eventsPerPartMin {
 		return nil, errors.New("events-per-partition bounds are invalid")
-	}
-	if strings.TrimSpace(opts.headerKey) == "" {
-		return nil, errors.New("header-key cannot be empty")
-	}
-	if opts.thresholdDays < 1 {
-		return nil, errors.New("threshold-days must be at least 1")
-	}
-	if opts.assertTimeout < time.Second {
-		return nil, errors.New("assert-timeout must be at least 1s")
-	}
-	if opts.assertPoll < time.Second {
-		return nil, errors.New("assert-poll-interval must be at least 1s")
 	}
 
 	return opts, nil
@@ -259,7 +204,7 @@ func createTopics(ctx context.Context, client *kafka.Client, opts *options) erro
 	return nil
 }
 
-func buildSimulationPlans(opts *options, randSrc *rand.Rand) ([]partitionPlan, int, error) {
+func buildPlans(opts *options, randSrc *rand.Rand) []partitionPlan {
 	now := time.Now().UTC()
 	windowStart := now.Add(-time.Duration(opts.virtualDays) * 24 * time.Hour)
 	activeEndLowerBound := now.Add(-14 * 24 * time.Hour)
@@ -271,12 +216,10 @@ func buildSimulationPlans(opts *options, randSrc *rand.Rand) ([]partitionPlan, i
 	}
 
 	plans := make([]partitionPlan, 0, opts.topicCount*opts.partitions)
-	expectedUnused := 0
 
 	for topicIdx := 0; topicIdx < opts.topicCount; topicIdx++ {
 		isInactive := topicIdx < inactiveCount
 		topic := topicName(opts.topicPrefix, topicIdx)
-		meta := topicExpectation{}
 
 		for partition := 0; partition < opts.partitions; partition++ {
 			events := opts.eventsPerPartMin
@@ -305,25 +248,15 @@ func buildSimulationPlans(opts *options, randSrc *rand.Rand) ([]partitionPlan, i
 				return timestamps[i].Before(timestamps[j])
 			})
 
-			lastTS := timestamps[len(timestamps)-1]
-			if meta.newestPartitionTS.IsZero() || lastTS.After(meta.newestPartitionTS) {
-				meta.newestPartitionTS = lastTS
-			}
-
 			plans = append(plans, partitionPlan{
 				topic:      topic,
 				partition:  int32(partition),
 				timestamps: timestamps,
 			})
 		}
-
-		meta.isUnused = now.Sub(meta.newestPartitionTS) >= time.Duration(opts.thresholdDays)*24*time.Hour
-		if meta.isUnused {
-			expectedUnused++
-		}
 	}
 
-	return plans, expectedUnused, nil
+	return plans
 }
 
 func sampleWeightedTimestamp(randSrc *rand.Rand, start, end time.Time) time.Time {
@@ -392,11 +325,8 @@ func producePlans(ctx context.Context, opts *options, plans []partitionPlan) err
 			rec := &kgo.Record{
 				Topic:     plan.topic,
 				Partition: plan.partition,
-				Value:     []byte("load-event"),
+				Value:     []byte(strconv.FormatInt(ts.Unix(), 10)),
 				Timestamp: ts,
-				Headers: []kgo.RecordHeader{
-					{Key: opts.headerKey, Value: []byte(strconv.FormatInt(ts.Unix(), 10))},
-				},
 			}
 			batch = append(batch, rec)
 			totalEvents++
@@ -438,85 +368,6 @@ func produceBatchWithRetry(ctx context.Context, producer *kgo.Client, batch []*k
 		time.Sleep(backoff)
 	}
 	return nil
-}
-
-func assertTrackerCounts(opts *options, expectedUnused int) error {
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-	deadline := time.Now().Add(opts.assertTimeout)
-	for {
-		stats, err := fetchStats(httpClient, opts.apiURL, opts.thresholdDays)
-		if err == nil {
-			fmt.Printf("[harness] tracker stats: total_topics=%d unused_topics=%d stale_partitions=%d\n", stats.TotalTopics, stats.UnusedTopics, stats.StalePartitions)
-			if stats.TotalTopics >= opts.topicCount && stats.UnusedTopics == expectedUnused {
-				unusedCount, err := fetchUnusedCount(httpClient, opts.apiURL, opts.thresholdDays)
-				if err != nil {
-					return err
-				}
-				if unusedCount != expectedUnused {
-					return fmt.Errorf("unused endpoint count mismatch: got=%d want=%d", unusedCount, expectedUnused)
-				}
-				return nil
-			}
-		}
-
-		if time.Now().After(deadline) {
-			if err != nil {
-				return fmt.Errorf("timed out waiting for tracker stats: %w", err)
-			}
-			return fmt.Errorf("timed out waiting for expected counts: got topics=%d unused=%d want topics>=%d unused=%d", stats.TotalTopics, stats.UnusedTopics, opts.topicCount, expectedUnused)
-		}
-
-		time.Sleep(opts.assertPoll)
-	}
-}
-
-func fetchStats(httpClient *http.Client, apiURL string, thresholdDays int) (*statsResponse, error) {
-	endpoint, err := url.JoinPath(apiURL, "/api/stats")
-	if err != nil {
-		return nil, fmt.Errorf("build stats endpoint: %w", err)
-	}
-	reqURL := fmt.Sprintf("%s?unused_days=%d", endpoint, thresholdDays)
-	resp, err := httpClient.Get(reqURL)
-	if err != nil {
-		return nil, fmt.Errorf("request stats endpoint: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("stats endpoint returned status %d", resp.StatusCode)
-	}
-
-	var stats statsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
-		return nil, fmt.Errorf("decode stats response: %w", err)
-	}
-	return &stats, nil
-}
-
-func fetchUnusedCount(httpClient *http.Client, apiURL string, thresholdDays int) (int, error) {
-	endpoint, err := url.JoinPath(apiURL, "/api/unused")
-	if err != nil {
-		return 0, fmt.Errorf("build unused endpoint: %w", err)
-	}
-
-	reqURL := fmt.Sprintf("%s?unused_days=%d", endpoint, thresholdDays)
-	resp, err := httpClient.Get(reqURL)
-	if err != nil {
-		return 0, fmt.Errorf("request unused endpoint: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("unused endpoint returned status %d", resp.StatusCode)
-	}
-
-	var payload struct {
-		Count int `json:"count"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return 0, fmt.Errorf("decode unused response: %w", err)
-	}
-	return payload.Count, nil
 }
 
 func topicName(prefix string, idx int) string {

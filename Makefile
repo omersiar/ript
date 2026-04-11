@@ -18,8 +18,8 @@ help:
 	@echo "  make docker-up    	- Start Docker Compose stack"
 	@echo "  make docker-down  	- Stop Docker Compose stack"
 	@echo "  make deps         	- Download dependencies"
-	@echo "  make harness-build	- Build the test harness binary"
-	@echo "  make harness-run  	- Run the test harness with default settings"
+	@echo "  make harness-build	- Build test harness (mass topic creator)"
+	@echo "  make harness-run  	- Build and run test harness"
 
 deps:
 	go mod download
@@ -28,14 +28,8 @@ deps:
 build: deps
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/ript ./cmd/ript
 
-harness-build: deps
-	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/testharness ./cmd/testharness
-
 run: build
 	./bin/ript
-
-harness-run: harness-build
-	./bin/testharness
 
 test:
 	go test -v ./...
@@ -62,5 +56,11 @@ docker-logs:
 
 docker-shell:
 	docker compose exec ript sh
+
+harness-build: deps
+	CGO_ENABLED=0 go build -o bin/testharness ./cmd/testharness
+
+harness-run: harness-build
+	./bin/testharness
 
 .DEFAULT_GOAL := help

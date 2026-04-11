@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/omersiar/ript/internal/logging"
@@ -167,6 +165,19 @@ func NewStateManager(client *Client, trackerTopic string, partitions int32, repl
 	}
 }
 
+// buildConsumerOpts returns the common consumer client options for dedicated
+// short-lived or long-lived consumers that read the tracker topic.
+func (sm *StateManager) buildConsumerOpts(clientRole string, consumeMap map[string]map[int32]kgo.Offset) []kgo.Opt {
+	opts := []kgo.Opt{
+		kgo.SeedBrokers(sm.client.config.Brokers...),
+		kgo.ClientID(sm.client.NextClientID(clientRole)),
+		kgo.ConsumePartitions(consumeMap),
+		kgo.FetchMaxBytes(10 * 1024 * 1024),
+		kgo.FetchMaxWait(500 * time.Millisecond),
+	}
+	return append(opts, sm.authOpts...)
+}
+
 // EnsureTrackerTopic creates the compacted state topic if it does not exist.
 // Topic configs are tuned for a high-churn compacted log: aggressive compaction
 // ratios, no time/size-based retention, and tombstone retention of 24 hours.
@@ -244,91 +255,33 @@ func (sm *StateManager) SaveSnapshot(ctx context.Context, snapshot *models.Clust
 		return err
 	}
 
-	type snapshotJob struct {
-		topicName   string
-		topicStatus *models.TopicStatus
-	}
-
-	topicJobs := make([]snapshotJob, 0, len(snapshot.Topics))
+	records := make([]*kgo.Record, 0, len(snapshot.Topics))
 	for topicName, topicStatus := range snapshot.Topics {
-		topicJobs = append(topicJobs, snapshotJob{topicName: topicName, topicStatus: topicStatus})
-	}
-
-	records := make([]*kgo.Record, 0, len(topicJobs))
-	if len(topicJobs) > 0 {
-		workers := runtime.GOMAXPROCS(0)
-		if workers < 1 {
-			workers = 1
+		state := &TopicState{
+			Version:    1,
+			Topic:      topicName,
+			Timestamp:  time.Now().UTC().Unix(),
+			Partitions: make(map[int32]PartitionState, len(topicStatus.Partitions)),
 		}
-		if workers > len(topicJobs) {
-			workers = len(topicJobs)
-		}
-
-		jobCh := make(chan snapshotJob)
-		recCh := make(chan *kgo.Record, len(topicJobs))
-
-		var wg sync.WaitGroup
-		for i := 0; i < workers; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for job := range jobCh {
-					if err := ctx.Err(); err != nil {
-						return
-					}
-
-					state := &TopicState{
-						Version:    1,
-						Topic:      job.topicName,
-						Timestamp:  time.Now().UTC().Unix(),
-						Partitions: make(map[int32]PartitionState, len(job.topicStatus.Partitions)),
-					}
-					for partID, partInfo := range job.topicStatus.Partitions {
-						state.Partitions[partID] = PartitionState{
-							Partition: partID,
-							Offset:    partInfo.Offset,
-							Timestamp: partInfo.Timestamp,
-						}
-					}
-
-					data, err := json.Marshal(state)
-					if err != nil {
-						logging.Warn("Failed to marshal state for topic %s: %v", job.topicName, err)
-						continue
-					}
-
-					record := &kgo.Record{
-						Topic: sm.trackerTopic,
-						Key:   []byte(job.topicName),
-						Value: data,
-					}
-
-					select {
-					case recCh <- record:
-					case <-ctx.Done():
-						return
-					}
-				}
-			}()
-		}
-
-		for _, job := range topicJobs {
-			select {
-			case jobCh <- job:
-			case <-ctx.Done():
-				close(jobCh)
-				wg.Wait()
-				close(recCh)
-				return ctx.Err()
+		for partID, partInfo := range topicStatus.Partitions {
+			state.Partitions[partID] = PartitionState{
+				Partition: partID,
+				Offset:    partInfo.Offset,
+				Timestamp: partInfo.Timestamp,
 			}
 		}
-		close(jobCh)
-		wg.Wait()
-		close(recCh)
 
-		for record := range recCh {
-			records = append(records, record)
+		data, err := json.Marshal(state)
+		if err != nil {
+			logging.Warn("Failed to marshal state for topic %s: %v", topicName, err)
+			continue
 		}
+
+		records = append(records, &kgo.Record{
+			Topic: sm.trackerTopic,
+			Key:   []byte(topicName),
+			Value: data,
+		})
 	}
 
 	if len(records) == 0 {
@@ -497,15 +450,7 @@ func (sm *StateManager) LoadLatestSnapshot(ctx context.Context) (*StateSnapshot,
 	}
 
 	// Dedicated consumer so we never mutate the shared client's consumer state.
-	consumerOpts := []kgo.Opt{
-		kgo.SeedBrokers(sm.client.config.Brokers...),
-		kgo.ClientID(sm.client.NextClientID("state-load")),
-		kgo.ConsumePartitions(consumeMap),
-		kgo.FetchMaxBytes(10 * 1024 * 1024),      // 10 MB per fetch for throughput
-		kgo.FetchMaxWait(500 * time.Millisecond), // don't stall long on sparse partitions
-	}
-	consumerOpts = append(consumerOpts, sm.authOpts...)
-	consumerClient, err := kgo.NewClient(consumerOpts...)
+	consumerClient, err := kgo.NewClient(sm.buildConsumerOpts("state-load", consumeMap)...)
 	if err != nil {
 		stats.LoadDuration = time.Since(start)
 		return nil, stats, fmt.Errorf("failed to create consumer client for state load: %w", err)
@@ -661,15 +606,7 @@ func (sm *StateManager) SubscribeGlobalUpdates(ctx context.Context, startOffsets
 		}
 	}
 
-	consumerOpts := []kgo.Opt{
-		kgo.SeedBrokers(sm.client.config.Brokers...),
-		kgo.ClientID(sm.client.NextClientID("global-view")),
-		kgo.ConsumePartitions(consumeMap),
-		kgo.FetchMaxWait(500 * time.Millisecond),
-		kgo.FetchMaxBytes(10 * 1024 * 1024),
-	}
-	consumerOpts = append(consumerOpts, sm.authOpts...)
-	consumerClient, err := kgo.NewClient(consumerOpts...)
+	consumerClient, err := kgo.NewClient(sm.buildConsumerOpts("global-view", consumeMap)...)
 	if err != nil {
 		logging.Warn("SubscribeGlobalUpdates: failed to create consumer client: %v", err)
 		return

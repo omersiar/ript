@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -83,6 +84,18 @@ func (s *Server) Start() error {
 	return s.router.Run(s.addr)
 }
 
+// ensureTrackerReady returns true if the tracker is initialized. If not, it
+// writes a 503 JSON response and returns false so the caller can return early.
+func (s *Server) ensureTrackerReady(c *gin.Context) bool {
+	if s.trackerPtr != nil {
+		return true
+	}
+	c.JSON(http.StatusServiceUnavailable, gin.H{
+		"error": "Not yet initialized, connecting to Kafka...",
+	})
+	return false
+}
+
 func (s *Server) handleHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":    "healthy",
@@ -91,16 +104,7 @@ func (s *Server) handleHealth(c *gin.Context) {
 }
 
 func (s *Server) handleListTopics(c *gin.Context) {
-	if s.trackerPtr == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":    "Not yet initialized, connecting to Kafka...",
-			"count":    0,
-			"topics":   []interface{}{},
-			"total":    0,
-			"page":     1,
-			"limit":    s.cfg.DefaultPageSize,
-			"has_more": false,
-		})
+	if !s.ensureTrackerReady(c) {
 		return
 	}
 
@@ -150,10 +154,7 @@ func (s *Server) handleListTopics(c *gin.Context) {
 }
 
 func (s *Server) handleGetTopic(c *gin.Context) {
-	if s.trackerPtr == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "Not yet initialized, connecting to Kafka...",
-		})
+	if !s.ensureTrackerReady(c) {
 		return
 	}
 
@@ -198,16 +199,7 @@ func (s *Server) handleGetTopic(c *gin.Context) {
 }
 
 func (s *Server) handleGetUnused(c *gin.Context) {
-	if s.trackerPtr == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":         "Not yet initialized, connecting to Kafka...",
-			"count":         0,
-			"unused_topics": []interface{}{},
-			"total":         0,
-			"page":          1,
-			"limit":         s.cfg.DefaultPageSize,
-			"has_more":      false,
-		})
+	if !s.ensureTrackerReady(c) {
 		return
 	}
 
@@ -258,15 +250,7 @@ func (s *Server) handleGetUnused(c *gin.Context) {
 }
 
 func (s *Server) handleStats(c *gin.Context) {
-	if s.trackerPtr == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":            "Not yet initialized, connecting to Kafka...",
-			"total_topics":     0,
-			"total_partitions": 0,
-			"unused_topics":    0,
-			"stale_partitions": 0,
-			"active_instances": 0,
-		})
+	if !s.ensureTrackerReady(c) {
 		return
 	}
 
@@ -317,12 +301,7 @@ func (s *Server) handleStats(c *gin.Context) {
 }
 
 func (s *Server) handleInstances(c *gin.Context) {
-	if s.trackerPtr == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":     "Not yet initialized, connecting to Kafka...",
-			"instances": []interface{}{},
-			"count":     0,
-		})
+	if !s.ensureTrackerReady(c) {
 		return
 	}
 
@@ -487,47 +466,10 @@ func statusOrder(t topicResponse, now int64, staleDays, unusedDays int) int {
 	return 0
 }
 
-func compareInts(a, b int) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	default:
-		return 0
-	}
-}
-
-func compareInt32s(a, b int32) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	default:
-		return 0
-	}
-}
-
-func compareInt64s(a, b int64) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	default:
-		return 0
-	}
-}
-
-func compareNames(a, b string) int {
-	return strings.Compare(strings.ToLower(a), strings.ToLower(b))
-}
-
 func (s *Server) sortTopicResponses(topics []topicResponse, sortBy, sortDir string, staleDays, unusedDays int) {
 	now := time.Now().Unix()
 	sort.SliceStable(topics, func(i, j int) bool {
-		nameCmp := compareNames(topics[i].Name, topics[j].Name)
+		nameCmp := cmp.Compare(strings.ToLower(topics[i].Name), strings.ToLower(topics[j].Name))
 		if sortBy == "name" {
 			if sortDir == "desc" {
 				return nameCmp > 0
@@ -535,28 +477,28 @@ func (s *Server) sortTopicResponses(topics []topicResponse, sortBy, sortDir stri
 			return nameCmp < 0
 		}
 
-		var cmp int
+		var c int
 		switch sortBy {
 		case "partitions":
-			cmp = compareInt32s(topics[i].PartitionCount, topics[j].PartitionCount)
+			c = cmp.Compare(topics[i].PartitionCount, topics[j].PartitionCount)
 		case "age":
 			// Ascending = smallest timestamp first (oldest partition age first).
-			cmp = compareInt64s(topics[i].OldestPartitionTimestamp, topics[j].OldestPartitionTimestamp)
+			c = cmp.Compare(topics[i].OldestPartitionTimestamp, topics[j].OldestPartitionTimestamp)
 		case "status":
-			cmp = compareInts(
+			c = cmp.Compare(
 				statusOrder(topics[i], now, staleDays, unusedDays),
 				statusOrder(topics[j], now, staleDays, unusedDays),
 			)
 		default:
-			cmp = nameCmp
+			c = nameCmp
 		}
 
-		if cmp == 0 {
+		if c == 0 {
 			return nameCmp < 0
 		}
 		if sortDir == "desc" {
-			return cmp > 0
+			return c > 0
 		}
-		return cmp < 0
+		return c < 0
 	})
 }

@@ -142,6 +142,41 @@
             min-width: 280px;
         }
 
+        .search-input-wrap {
+            position: relative;
+        }
+
+        .search-input-wrap input {
+            padding-right: 2rem;
+        }
+
+        .search-input-wrap input.is-invalid {
+            padding-right: 3.5rem;
+        }
+
+        .search-clear-btn {
+            position: absolute;
+            right: 0.45rem;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            padding: 0 0.25rem;
+            font-size: 1.1rem;
+            line-height: 1;
+            color: #aaa;
+            cursor: pointer;
+            z-index: 2;
+        }
+
+        .search-input-wrap input.is-invalid ~ .search-clear-btn {
+            right: 2rem;
+        }
+
+        .search-clear-btn:hover {
+            color: #333;
+        }
+
         .panel-tool-group .form-label {
             margin-bottom: 0.25rem;
             font-size: 0.76rem;
@@ -444,7 +479,10 @@
             <div class="topics-search-row">
                 <div class="panel-tool-group search-group">
                     <label for="topicSearch" class="form-label">Search Topics</label>
-                    <input type="text" id="topicSearch" class="form-control" placeholder="e.g. orders-.* or ^prod">
+                    <div class="search-input-wrap">
+                        <input type="text" id="topicSearch" class="form-control" placeholder="e.g. orders-.* or ^prod">
+                        <button type="button" class="search-clear-btn" id="searchClearBtn" style="display:none;" aria-label="Clear search">&times;</button>
+                    </div>
                     <div id="searchError" class="text-danger small mt-1" style="display:none;"></div>
                 </div>
             </div>
@@ -473,6 +511,11 @@
                     <button class="btn btn-sm btn-outline-dark" id="lastPageBtn">⇥</button>
                 </div>
                 <div class="pager-size-group">
+                    <span id="pageInput" class="d-inline-flex align-items-center gap-1" style="display:none !important;">
+                        <span class="subtle">Page</span>
+                        <select id="pageInputField" class="form-select form-select-sm" style="width:auto;"></select>
+                        <span class="subtle" id="pageInputTotal"></span>
+                    </span>
                     <label for="pageSize" class="subtle mb-0">Page Size</label>
                     <select id="pageSize" class="form-select form-select-sm">
                         <option value="25">25</option>
@@ -928,6 +971,7 @@
             document.getElementById('lastPageBtn').disabled = !hasMore;
 
             const container = document.getElementById('pageNumbers');
+            const pageInputContainer = document.getElementById('pageInput');
             container.innerHTML = '';
 
             const maxVisible = 7;
@@ -935,6 +979,7 @@
             if (totalPages <= maxVisible) {
                 startPage = 1;
                 endPage = totalPages;
+                pageInputContainer.style.display = 'none';
             } else {
                 const half = Math.floor(maxVisible / 2);
                 startPage = Math.max(1, currentPage - half);
@@ -943,6 +988,18 @@
                     endPage = totalPages;
                     startPage = Math.max(1, endPage - maxVisible + 1);
                 }
+                pageInputContainer.style.display = '';
+                pageInputContainer.classList.add('d-inline-flex');
+                const pageField = document.getElementById('pageInputField');
+                pageField.innerHTML = '';
+                for (let p = 1; p <= totalPages; p++) {
+                    const opt = document.createElement('option');
+                    opt.value = p;
+                    opt.textContent = p;
+                    if (p === currentPage) opt.selected = true;
+                    pageField.appendChild(opt);
+                }
+                document.getElementById('pageInputTotal').textContent = `of ${totalPages}`;
             }
 
             for (let p = startPage; p <= endPage; p++) {
@@ -1103,6 +1160,14 @@
             await loadTopics();
         });
 
+        document.getElementById('pageInputField').addEventListener('change', async (event) => {
+            const val = parseInt(event.target.value, 10);
+            if (Number.isInteger(val) && val >= 1 && val !== currentPage) {
+                currentPage = val;
+                await loadTopics();
+            }
+        });
+
         document.getElementById('pageSize').addEventListener('change', async (event) => {
             const value = parseInt(event.target.value, 10);
             pageSize = Number.isInteger(value) && value > 0 ? value : DEFAULTS.pageSize;
@@ -1112,6 +1177,8 @@
         });
 
         document.getElementById('topicSearch').addEventListener('input', (event) => {
+            const clearBtn = document.getElementById('searchClearBtn');
+            clearBtn.style.display = event.target.value.length > 0 ? '' : 'none';
             clearTimeout(searchDebounceTimer);
             searchDebounceTimer = setTimeout(async () => {
                 searchQuery = event.target.value.trim();
@@ -1120,13 +1187,35 @@
             }, 300);
         });
 
-        document.getElementById('topicSearch').addEventListener('keypress', async (event) => {
-            if (event.key !== 'Enter') return;
-            event.preventDefault();
-            clearTimeout(searchDebounceTimer);
-            searchQuery = event.target.value.trim();
+        document.getElementById('searchClearBtn').addEventListener('click', async () => {
+            const input = document.getElementById('topicSearch');
+            input.value = '';
+            document.getElementById('searchClearBtn').style.display = 'none';
+            searchQuery = '';
             currentPage = 1;
             await loadTopics();
+            input.focus();
+        });
+
+        document.getElementById('topicSearch').addEventListener('keydown', async (event) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                if (event.target.value) {
+                    event.target.value = '';
+                    document.getElementById('searchClearBtn').style.display = 'none';
+                    searchQuery = '';
+                    currentPage = 1;
+                    await loadTopics();
+                }
+                return;
+            }
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                clearTimeout(searchDebounceTimer);
+                searchQuery = event.target.value.trim();
+                currentPage = 1;
+                await loadTopics();
+            }
         });
 
         document.getElementById('topicsTable').querySelector('thead').addEventListener('click', async (event) => {

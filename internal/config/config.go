@@ -17,9 +17,6 @@ type Config struct {
 	TrackerGroupSessionTimeoutMS   int
 	TrackerGroupHeartbeatMS        int
 	TrackerGroupRebalanceTimeoutMS int
-	TrackerTimestampSource         string
-	TrackerEventTimeHeader         string
-	TrackerEventLookupTimeoutMS    int
 	TrackerTopicPartitions         int
 	TrackerTopicReplicationFactor  int
 	TrackerTopicSegmentMS          int
@@ -71,9 +68,6 @@ func Load() (*Config, error) {
 		TrackerGroupSessionTimeoutMS:   getInt("RIPT_KAFKA_CONSUMER_SESSION_TIMEOUT_MS", 30000),
 		TrackerGroupHeartbeatMS:        getInt("RIPT_KAFKA_CONSUMER_HEARTBEAT_MS", 3000),
 		TrackerGroupRebalanceTimeoutMS: getInt("RIPT_KAFKA_CONSUMER_REBALANCE_TIMEOUT_MS", 45000),
-		TrackerTimestampSource:         strings.ToLower(getString("RIPT_TIMESTAMP_SOURCE", "offset")),
-		TrackerEventTimeHeader:         getString("RIPT_EVENT_TIME_HEADER", "x-event-time-ms"),
-		TrackerEventLookupTimeoutMS:    getInt("RIPT_EVENT_LOOKUP_TIMEOUT_MS", 3000),
 		TrackerTopicPartitions:         getInt("RIPT_STATE_TOPIC_PARTITIONS", 6),
 		TrackerTopicReplicationFactor:  getInt("RIPT_STATE_TOPIC_REPLICATION_FACTOR", 1),
 		TrackerTopicSegmentMS:          getInt("RIPT_STATE_TOPIC_SEGMENT_MS", 86400000),
@@ -137,15 +131,6 @@ func (c *Config) Validate() error {
 	if c.TrackerGroupRebalanceTimeoutMS < c.TrackerGroupSessionTimeoutMS {
 		return fmt.Errorf("RIPT_KAFKA_CONSUMER_REBALANCE_TIMEOUT_MS must be greater than or equal to RIPT_KAFKA_CONSUMER_SESSION_TIMEOUT_MS")
 	}
-	if c.TrackerTimestampSource != "offset" && c.TrackerTimestampSource != "header" {
-		return fmt.Errorf("RIPT_TIMESTAMP_SOURCE must be either 'offset' or 'header'")
-	}
-	if strings.TrimSpace(c.TrackerEventTimeHeader) == "" {
-		return fmt.Errorf("RIPT_EVENT_TIME_HEADER cannot be empty")
-	}
-	if c.TrackerEventLookupTimeoutMS < 100 {
-		return fmt.Errorf("RIPT_EVENT_LOOKUP_TIMEOUT_MS must be at least 100")
-	}
 	if c.TrackerTopicPartitions < 1 {
 		return fmt.Errorf("RIPT_STATE_TOPIC_PARTITIONS must be at least 1")
 	}
@@ -195,10 +180,9 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) String() string {
-	return fmt.Sprintf("Config{Brokers: %v, ScanInterval: %dm, StateTopic: %s, ConsumerGroupID: %s, GroupSessionTimeoutMS: %d, GroupHeartbeatMS: %d, GroupRebalanceTimeoutMS: %d, TimestampSource: %s, EventHeader: %s, EventLookupTimeoutMS: %d, Partitions: %d, RF: %d, SegmentMS: %d, MinCleanableRatio: %g, StateLoadTimeout: %ds, InstanceID: %s, HTTPPort: %d, StaticFilesDir: %s, LogLevel: %s, StaleDays: %d, UnusedDays: %d, HeartbeatInterval: %ds, ConnectRetry: %ds}",
+	return fmt.Sprintf("Config{Brokers: %v, ScanInterval: %dm, StateTopic: %s, ConsumerGroupID: %s, GroupSessionTimeoutMS: %d, GroupHeartbeatMS: %d, GroupRebalanceTimeoutMS: %d, Partitions: %d, RF: %d, SegmentMS: %d, MinCleanableRatio: %g, StateLoadTimeout: %ds, InstanceID: %s, HTTPPort: %d, StaticFilesDir: %s, LogLevel: %s, StaleDays: %d, UnusedDays: %d, HeartbeatInterval: %ds, ConnectRetry: %ds}",
 		c.KafkaBrokers, c.ScanIntervalMinutes, c.TrackerTopic,
 		c.TrackerConsumerGroupID, c.TrackerGroupSessionTimeoutMS, c.TrackerGroupHeartbeatMS, c.TrackerGroupRebalanceTimeoutMS,
-		c.TrackerTimestampSource, c.TrackerEventTimeHeader, c.TrackerEventLookupTimeoutMS,
 		c.TrackerTopicPartitions, c.TrackerTopicReplicationFactor, c.TrackerTopicSegmentMS, c.TrackerTopicMinCleanableRatio, c.StateLoadTimeoutSeconds,
 		c.InstanceID, c.HTTPPort, c.StaticFilesDir, c.LogLevel, c.StalePartitionDays, c.UnusedTopicDays,
 		c.InstanceHeartbeatIntervalSeconds, c.KafkaConnectRetrySeconds)
