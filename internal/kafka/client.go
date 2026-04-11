@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/omersiar/ript/internal/logging"
+	"github.com/omersiar/ript/internal/version"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
@@ -26,6 +28,19 @@ type ClientConfig struct {
 	AuthOpts []kgo.Opt
 }
 
+func franzGoVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	for _, dep := range info.Deps {
+		if dep.Path == "github.com/twmb/franz-go" {
+			return dep.Version
+		}
+	}
+	return "unknown"
+}
+
 func NewClient(brokers []string) (*Client, error) {
 	return NewClientWithConfig(ClientConfig{Brokers: brokers})
 }
@@ -37,6 +52,11 @@ func NewClientWithConfig(cfg ClientConfig) (*Client, error) {
 	if strings.TrimSpace(cfg.ClientID) != "" {
 		opts = append(opts, kgo.ClientID(cfg.ClientID))
 	}
+
+	opts = append(opts, kgo.SoftwareNameAndVersion(
+		"ript-franz-go",
+		version.Version+"-"+franzGoVersion(),
+	))
 
 	opts = append(opts, cfg.AuthOpts...)
 
