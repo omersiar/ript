@@ -103,6 +103,7 @@ func (b *WorkloadBalancer) Start(ctx context.Context) error {
 	clientOpts := []kgo.Opt{
 		kgo.SeedBrokers(b.brokers...),
 		kgo.ClientID(b.clientID),
+		softwareNameAndVersionOpt(),
 		kgo.ConsumerGroup(b.consumerGroupID),
 		kgo.ConsumeTopics(b.trackerTopic),
 		kgo.DisableAutoCommit(),

@@ -171,6 +171,7 @@ func (sm *StateManager) buildConsumerOpts(clientRole string, consumeMap map[stri
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(sm.client.config.Brokers...),
 		kgo.ClientID(sm.client.NextClientID(clientRole)),
+		softwareNameAndVersionOpt(),
 		kgo.ConsumePartitions(consumeMap),
 		kgo.FetchMaxBytes(10 * 1024 * 1024),
 		kgo.FetchMaxWait(500 * time.Millisecond),

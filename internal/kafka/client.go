@@ -41,6 +41,13 @@ func franzGoVersion() string {
 	return "unknown"
 }
 
+func softwareNameAndVersionOpt() kgo.Opt {
+	return kgo.SoftwareNameAndVersion(
+		"ript-franz-go",
+		version.Version+"-"+franzGoVersion(),
+	)
+}
+
 func NewClient(brokers []string) (*Client, error) {
 	return NewClientWithConfig(ClientConfig{Brokers: brokers})
 }
@@ -53,10 +60,7 @@ func NewClientWithConfig(cfg ClientConfig) (*Client, error) {
 		opts = append(opts, kgo.ClientID(cfg.ClientID))
 	}
 
-	opts = append(opts, kgo.SoftwareNameAndVersion(
-		"ript-franz-go",
-		version.Version+"-"+franzGoVersion(),
-	))
+	opts = append(opts, softwareNameAndVersionOpt())
 
 	opts = append(opts, cfg.AuthOpts...)
 
