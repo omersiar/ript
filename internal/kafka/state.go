@@ -166,17 +166,19 @@ func NewStateManager(client *Client, trackerTopic string, partitions int32, repl
 }
 
 // buildConsumerOpts returns the common consumer client options for dedicated
-// short-lived or long-lived consumers that read the tracker topic.
-func (sm *StateManager) buildConsumerOpts(clientRole string, consumeMap map[string]map[int32]kgo.Offset) []kgo.Opt {
+// short-lived or long-lived consumers that read the tracker topic, along with
+// the generated client ID used in those options.
+func (sm *StateManager) buildConsumerOpts(clientRole string, consumeMap map[string]map[int32]kgo.Offset) ([]kgo.Opt, string) {
+	clientID := sm.client.NextClientID(clientRole)
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(sm.client.config.Brokers...),
-		kgo.ClientID(sm.client.NextClientID(clientRole)),
+		kgo.ClientID(clientID),
 		softwareNameAndVersionOpt(),
 		kgo.ConsumePartitions(consumeMap),
 		kgo.FetchMaxBytes(10 * 1024 * 1024),
 		kgo.FetchMaxWait(500 * time.Millisecond),
 	}
-	return append(opts, sm.authOpts...)
+	return append(opts, sm.authOpts...), clientID
 }
 
 // EnsureTrackerTopic creates the compacted state topic if it does not exist.
@@ -451,12 +453,19 @@ func (sm *StateManager) LoadLatestSnapshot(ctx context.Context) (*StateSnapshot,
 	}
 
 	// Dedicated consumer so we never mutate the shared client's consumer state.
-	consumerClient, err := kgo.NewClient(sm.buildConsumerOpts("state-load", consumeMap)...)
+	softwareName, softwareVersion := softwareNameAndVersion()
+	consumerOpts, consumerClientID := sm.buildConsumerOpts("state-load", consumeMap)
+	consumerClient, err := kgo.NewClient(consumerOpts...)
 	if err != nil {
 		stats.LoadDuration = time.Since(start)
 		return nil, stats, fmt.Errorf("failed to create consumer client for state load: %w", err)
 	}
 	defer consumerClient.Close()
+	logging.Info("State load Kafka client connected: client_id=%s software_name=%s software_version=%s",
+		consumerClientID,
+		softwareName,
+		softwareVersion,
+	)
 
 	// Track the highest record offset seen per active partition.
 	lastSeen := make(map[int32]int64, len(activePartitions))
@@ -607,12 +616,20 @@ func (sm *StateManager) SubscribeGlobalUpdates(ctx context.Context, startOffsets
 		}
 	}
 
-	consumerClient, err := kgo.NewClient(sm.buildConsumerOpts("global-view", consumeMap)...)
+	consumerOpts, consumerClientID := sm.buildConsumerOpts("global-view", consumeMap)
+	consumerClient, err := kgo.NewClient(consumerOpts...)
 	if err != nil {
 		logging.Warn("SubscribeGlobalUpdates: failed to create consumer client: %v", err)
 		return
 	}
 	defer consumerClient.Close()
+
+	softwareName, softwareVersion := softwareNameAndVersion()
+	logging.Info("Global updates Kafka client connected: client_id=%s software_name=%s software_version=%s",
+		consumerClientID,
+		softwareName,
+		softwareVersion,
+	)
 
 	logging.Debug("SubscribeGlobalUpdates: tailing tracker topic from %d partition(s)", len(partitions))
 

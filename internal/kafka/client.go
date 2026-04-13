@@ -28,6 +28,41 @@ type ClientConfig struct {
 	AuthOpts []kgo.Opt
 }
 
+func normalizeSoftwareToken(value string, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+
+	var builder strings.Builder
+	prevSeparator := false
+	for _, r := range trimmed {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			builder.WriteRune(r)
+			prevSeparator = false
+		case r == '.' || r == '-':
+			if builder.Len() == 0 || prevSeparator {
+				continue
+			}
+			builder.WriteRune(r)
+			prevSeparator = true
+		default:
+			if builder.Len() == 0 || prevSeparator {
+				continue
+			}
+			builder.WriteRune('-')
+			prevSeparator = true
+		}
+	}
+
+	normalized := strings.Trim(builder.String(), ".-")
+	if normalized == "" {
+		return fallback
+	}
+	return normalized
+}
+
 func franzGoVersion() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
@@ -41,11 +76,16 @@ func franzGoVersion() string {
 	return "unknown"
 }
 
+func softwareNameAndVersion() (string, string) {
+	softwareName := normalizeSoftwareToken("ript-franz-go", "ript-franz-go")
+	riptVersion := normalizeSoftwareToken(version.Version, "unknown")
+	franzVersion := normalizeSoftwareToken(franzGoVersion(), "unknown")
+	return softwareName, riptVersion + "-" + franzVersion
+}
+
 func softwareNameAndVersionOpt() kgo.Opt {
-	return kgo.SoftwareNameAndVersion(
-		"ript-franz-go",
-		version.Version+"-"+franzGoVersion(),
-	)
+	softwareName, softwareVersion := softwareNameAndVersion()
+	return kgo.SoftwareNameAndVersion(softwareName, softwareVersion)
 }
 
 func NewClient(brokers []string) (*Client, error) {
@@ -53,6 +93,7 @@ func NewClient(brokers []string) (*Client, error) {
 }
 
 func NewClientWithConfig(cfg ClientConfig) (*Client, error) {
+	softwareName, softwareVersion := softwareNameAndVersion()
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(cfg.Brokers...),
 	}
@@ -60,7 +101,7 @@ func NewClientWithConfig(cfg ClientConfig) (*Client, error) {
 		opts = append(opts, kgo.ClientID(cfg.ClientID))
 	}
 
-	opts = append(opts, softwareNameAndVersionOpt())
+	opts = append(opts, kgo.SoftwareNameAndVersion(softwareName, softwareVersion))
 
 	opts = append(opts, cfg.AuthOpts...)
 
@@ -89,6 +130,12 @@ func NewClientWithConfig(cfg ClientConfig) (*Client, error) {
 	if err := c.client.Ping(ctx); err != nil {
 		return nil, fmt.Errorf("failed to connect to Kafka brokers: %w", err)
 	}
+
+	logging.Info("Kafka client connected: client_id=%s software_name=%s software_version=%s",
+		strings.TrimSpace(cfg.ClientID),
+		softwareName,
+		softwareVersion,
+	)
 
 	return c, nil
 }
