@@ -23,17 +23,17 @@ type TopicTracker struct {
 	instanceID        string
 	consumerGroupID   string
 	heartbeatInterval time.Duration
-	currentSnapshot   atomic.Pointer[models.ClusterSnapshot]
 	activeInstances   atomic.Pointer[map[string]models.InstanceInfo]
 	stopChan          chan struct{}
 	wg                sync.WaitGroup
 	scanMu            sync.Mutex
 	// globalMu guards globalTopics. globalSnapshot is rebuilt atomically after
 	// every merge so readers never need to hold globalMu.
-	globalMu       sync.RWMutex
-	globalTopics   map[string]*models.TopicStatus
-	globalSnapshot atomic.Pointer[models.ClusterSnapshot]
-	globalCancel   context.CancelFunc
+	globalMu        sync.RWMutex
+	globalTopics    map[string]*models.TopicStatus
+	globalSnapshot  atomic.Pointer[models.ClusterSnapshot]
+	globalCancel    context.CancelFunc
+	assignmentEpoch uint64
 }
 
 type Options struct {
@@ -72,7 +72,6 @@ func NewWithOptions(kafkaClient *kafka.Client, stateManager *kafka.StateManager,
 		IsGlobal:        true,
 		LocalInstanceID: opts.InstanceID,
 	}
-	tt.currentSnapshot.Store(emptySnapshot)
 	tt.globalSnapshot.Store(emptySnapshot)
 	emptyInstances := make(map[string]models.InstanceInfo)
 	tt.activeInstances.Store(&emptyInstances)
@@ -89,7 +88,6 @@ func (t *TopicTracker) Start(ctx context.Context) error {
 	snapshot, loadStats, err := t.stateManager.LoadLatestSnapshot(ctx)
 	if err == nil && snapshot != nil {
 		logging.Info("Loaded previous snapshot from %v", time.Unix(snapshot.Timestamp, 0).UTC())
-		t.syncSnapshotToModel(snapshot)
 		t.syncGlobalFromState(snapshot)
 		t.syncInstancesFromState(snapshot)
 		if loadStats != nil && loadStats.TopicExists {
@@ -129,6 +127,7 @@ func (t *TopicTracker) Start(ctx context.Context) error {
 		if !t.workloadBalancer.WaitForAssignments(ctx, 10*time.Second) {
 			logging.Warn("No workload assignment received within startup wait window; tracker will wait for rebalance updates")
 		}
+		t.assignmentEpoch = t.workloadBalancer.AssignmentEpoch()
 	}
 
 	// Write an initial heartbeat before starting the periodic loop so that
@@ -190,6 +189,11 @@ func (t *TopicTracker) scanLoop(ctx context.Context) {
 				logging.Warn("Skipping scan cycle: previous scan still in progress")
 				continue
 			}
+			if err := t.prepareForScan(ctx); err != nil {
+				t.scanMu.Unlock()
+				logging.Warn("Skipping scan cycle: %v", err)
+				continue
+			}
 			err := t.scanTopics(ctx)
 			t.scanMu.Unlock()
 			if err != nil {
@@ -197,6 +201,68 @@ func (t *TopicTracker) scanLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (t *TopicTracker) prepareForScan(ctx context.Context) error {
+	if t.workloadBalancer == nil {
+		return nil
+	}
+
+	if !t.workloadBalancer.WaitForStableAssignments(ctx, 10*time.Second) {
+		return fmt.Errorf("consumer group rebalance still in progress")
+	}
+
+	epoch := t.workloadBalancer.AssignmentEpoch()
+	if epoch == t.assignmentEpoch {
+		return nil
+	}
+
+	logging.Info("Workload assignment epoch changed: previous=%d current=%d; replaying tracker state", t.assignmentEpoch, epoch)
+	if err := t.replayState(ctx); err != nil {
+		return fmt.Errorf("failed to replay tracker state after rebalance: %w", err)
+	}
+
+	t.assignmentEpoch = epoch
+	return nil
+}
+
+func (t *TopicTracker) replayState(ctx context.Context) error {
+	if t.stateManager == nil {
+		return nil
+	}
+
+	snapshot, loadStats, err := t.stateManager.LoadLatestSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if snapshot == nil {
+		return nil
+	}
+
+	t.syncGlobalFromState(snapshot)
+	t.syncInstancesFromState(snapshot)
+
+	if loadStats != nil && loadStats.TopicExists {
+		status := "complete"
+		if loadStats.TimedOut {
+			status = "partial_timeout"
+		}
+		logging.Info("Post-rebalance state replay stats: total_messages=%d duplicate_keys=%d discarded=%d tombstones=%d unique_keys=%d malformed=%d partitions=%d duration_ms=%d final_topics=%d final_instances=%d status=%s",
+			loadStats.TotalRecords,
+			loadStats.DuplicateKeyRecords,
+			loadStats.DiscardedRecords,
+			loadStats.TombstoneRecords,
+			loadStats.UniqueKeysSeen,
+			loadStats.MalformedRecords,
+			loadStats.PartitionsScanned,
+			loadStats.LoadDuration.Milliseconds(),
+			loadStats.FinalTopicCount,
+			loadStats.FinalInstanceCount,
+			status,
+		)
+	}
+
+	return nil
 }
 
 // heartbeatLoop periodically writes the local instance heartbeat to the
@@ -229,7 +295,7 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 		return fmt.Errorf("failed to list topics: %w", err)
 	}
 
-	previousSnapshot := t.currentSnapshot.Load()
+	previousGlobalSnapshot := t.globalSnapshot.Load()
 
 	// Build a set of all topics currently in Kafka (before ownership filtering)
 	// so we can detect topics that have been deleted since the last scan.
@@ -315,7 +381,7 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 			}
 			processedPartitions++
 
-			previous := previousPartitionInfo(previousSnapshot, meta.name, partID)
+			previous := previousPartitionInfo(previousGlobalSnapshot, meta.name, partID)
 			partInfo := buildPartitionInfo(partID, offset, previous, scanTime)
 
 			topicStatus.Partitions[partID] = partInfo
@@ -339,8 +405,6 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 		processedTopics++
 	}
 
-	t.currentSnapshot.Store(snapshot)
-
 	if err := t.stateManager.SaveSnapshot(ctx, snapshot); err != nil {
 		logging.Warn("Failed to save snapshot: %v", err)
 	}
@@ -348,7 +412,7 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 	// Emit tombstones for topics that existed in the previous snapshot but are
 	// no longer present in Kafka. This keeps the compacted tracker topic clean
 	// so that deleted topics do not reappear when the tracker restarts.
-	for topicName := range previousSnapshot.Topics {
+	for topicName := range previousGlobalSnapshot.Topics {
 		if _, exists := kafkaTopicSet[topicName]; !exists {
 			logging.Info("Topic %q no longer exists in Kafka, emitting tombstone", topicName)
 			if err := t.stateManager.DeleteTopicState(ctx, topicName); err != nil {
@@ -363,24 +427,13 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 	return nil
 }
 
-func (t *TopicTracker) syncSnapshotToModel(snapshot *kafka.StateSnapshot) {
-	cs := &models.ClusterSnapshot{
-		Topics:    make(map[string]*models.TopicStatus),
-		Timestamp: snapshot.Timestamp,
-		Version:   snapshot.Version,
-	}
-	for topicName, partitions := range snapshot.Topics {
-		cs.Topics[topicName] = buildTopicStatusFromStatePartitions(topicName, snapshot.Timestamp, partitions)
-	}
-	t.currentSnapshot.Store(cs)
-}
-
 // syncGlobalFromState populates globalTopics from the offline state replay and
 // stores the initial globalSnapshot. Called once during Start() after the state
 // load completes, before the continuous consumer loop begins.
 func (t *TopicTracker) syncGlobalFromState(snapshot *kafka.StateSnapshot) {
 	t.globalMu.Lock()
 	defer t.globalMu.Unlock()
+	t.globalTopics = make(map[string]*models.TopicStatus, len(snapshot.Topics))
 	for topicName, partitions := range snapshot.Topics {
 		t.globalTopics[topicName] = buildTopicStatusFromStatePartitions(topicName, snapshot.Timestamp, partitions)
 	}

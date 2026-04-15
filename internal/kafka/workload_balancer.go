@@ -27,9 +27,11 @@ type WorkloadBalancer struct {
 	clientID          string
 	authOpts          []kgo.Opt
 
-	mu             sync.RWMutex
-	assignedShards map[int32]struct{}
-	started        bool
+	mu              sync.RWMutex
+	assignedShards  map[int32]struct{}
+	started         bool
+	rebalancing     bool
+	assignmentEpoch uint64
 
 	client   *kgo.Client
 	stopChan chan struct{}
@@ -87,6 +89,7 @@ func NewWorkloadBalancer(opts WorkloadBalancerOptions) (*WorkloadBalancer, error
 		clientID:          opts.ClientID,
 		authOpts:          slices.Clone(opts.AuthOpts),
 		assignedShards:    make(map[int32]struct{}),
+		rebalancing:       true,
 		stopChan:          make(chan struct{}),
 	}, nil
 }
@@ -219,6 +222,7 @@ func (b *WorkloadBalancer) updateAssignment(partitions []int32) {
 
 	b.mu.Lock()
 	b.assignedShards = assignment
+	b.rebalancing = true
 	b.mu.Unlock()
 
 	logging.Info("Workload assignment reset: group=%s assigned_shards=%d", b.consumerGroupID, len(partitions))
@@ -229,13 +233,19 @@ func (b *WorkloadBalancer) updateAssignment(partitions []int32) {
 // newly granted partitions are delivered, not the full set.
 func (b *WorkloadBalancer) addAssignments(partitions []int32) {
 	b.mu.Lock()
+	wasRebalancing := b.rebalancing
 	for _, p := range partitions {
 		b.assignedShards[p] = struct{}{}
 	}
+	b.rebalancing = false
+	if wasRebalancing {
+		b.assignmentEpoch++
+	}
 	total := len(b.assignedShards)
+	epoch := b.assignmentEpoch
 	b.mu.Unlock()
 
-	logging.Info("Workload assignment gained: group=%s added=%d assigned_shards=%d", b.consumerGroupID, len(partitions), total)
+	logging.Info("Workload assignment gained: group=%s added=%d assigned_shards=%d epoch=%d", b.consumerGroupID, len(partitions), total, epoch)
 }
 
 // removeAssignments incrementally removes partitions from the shard set.
@@ -243,6 +253,9 @@ func (b *WorkloadBalancer) addAssignments(partitions []int32) {
 // partitions being transferred away are delivered.
 func (b *WorkloadBalancer) removeAssignments(partitions []int32) {
 	b.mu.Lock()
+	if !b.rebalancing {
+		b.rebalancing = true
+	}
 	for _, p := range partitions {
 		delete(b.assignedShards, p)
 	}
@@ -250,6 +263,38 @@ func (b *WorkloadBalancer) removeAssignments(partitions []int32) {
 	b.mu.Unlock()
 
 	logging.Info("Workload assignment released: group=%s removed=%d assigned_shards=%d", b.consumerGroupID, len(partitions), total)
+}
+
+func (b *WorkloadBalancer) IsRebalancing() bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.rebalancing
+}
+
+func (b *WorkloadBalancer) AssignmentEpoch() uint64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.assignmentEpoch
+}
+
+func (b *WorkloadBalancer) WaitForStableAssignments(ctx context.Context, timeout time.Duration) bool {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if !b.IsRebalancing() {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-deadline.C:
+			return false
+		case <-ticker.C:
+		}
+	}
 }
 
 func (b *WorkloadBalancer) HasAssignments() bool {

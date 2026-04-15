@@ -180,6 +180,39 @@ func TestSyncGlobalFromStatePopulatesSnapshot(t *testing.T) {
 	}
 }
 
+func TestSyncGlobalFromStateReplacesPreviousTopics(t *testing.T) {
+	tt := newTestTracker("inst-2")
+	now := time.Date(2026, time.March, 30, 12, 0, 0, 0, time.UTC)
+
+	initial := &kafka.StateSnapshot{
+		Timestamp: now.Unix(),
+		Version:   1,
+		Topics: map[string]map[int32]kafka.PartitionState{
+			"topic-old": {0: {Partition: 0, Offset: 10, Timestamp: now.Unix()}},
+		},
+		Instances: map[string]kafka.HeartbeatRecord{},
+	}
+	tt.syncGlobalFromState(initial)
+
+	replayed := &kafka.StateSnapshot{
+		Timestamp: now.Add(time.Minute).Unix(),
+		Version:   1,
+		Topics: map[string]map[int32]kafka.PartitionState{
+			"topic-new": {0: {Partition: 0, Offset: 20, Timestamp: now.Add(time.Minute).Unix()}},
+		},
+		Instances: map[string]kafka.HeartbeatRecord{},
+	}
+	tt.syncGlobalFromState(replayed)
+
+	snapshot := tt.globalSnapshot.Load()
+	if _, ok := snapshot.Topics["topic-old"]; ok {
+		t.Fatal("expected stale topic to be removed after replay")
+	}
+	if _, ok := snapshot.Topics["topic-new"]; !ok {
+		t.Fatal("expected new topic to exist after replay")
+	}
+}
+
 func mustMarshalHeartbeatRecord(t *testing.T, record kafka.HeartbeatRecord) []byte {
 	t.Helper()
 	b, err := json.Marshal(record)
