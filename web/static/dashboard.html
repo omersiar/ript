@@ -17,7 +17,7 @@
             --line: #d8d8d8;
             --shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
             --active: #202020;
-            --stale: #6d6d6d;
+            --stale: #664d03;
             --unused: #0a0a0a;
         }
 
@@ -285,18 +285,13 @@
         }
 
         .badge-stale {
-            background: #c6c6c6;
+            background: #fff3cd;
             color: var(--stale);
         }
 
         .badge-unused {
             background: #212121;
             color: #f8f8f8;
-        }
-
-        .badge-issue {
-            background: #fff3cd;
-            color: #664d03;
         }
 
         .error {
@@ -750,7 +745,7 @@
                 return { label: 'Unused', className: 'badge-unused' };
             }
             if (oldestAgeDays >= staleDays) {
-                return { label: 'Has Stale', className: 'badge-issue' };
+                return { label: 'Has Stale', className: 'badge-stale' };
             }
             return { label: 'Active', className: 'badge-active' };
         }
