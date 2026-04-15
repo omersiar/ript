@@ -401,6 +401,20 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 			topicStatus.NewestPartitionAge = models.CalculateDuration(time.Unix(newestTimestamp, 0).UTC())
 		}
 
+		// Include non-owned partitions from the global snapshot so that the
+		// record written to the tracker topic always carries the full partition
+		// state for this topic. After log compaction only the latest record per
+		// topic key survives; omitting partitions owned by other instances would
+		// cause their state to disappear from cold-start replays, which in turn
+		// triggers accidental timestamp resets for those partitions on every scan.
+		if globalTopic, ok := previousGlobalSnapshot.Topics[meta.name]; ok {
+			for partID, partInfo := range globalTopic.Partitions {
+				if _, owned := topicStatus.Partitions[partID]; !owned {
+					topicStatus.Partitions[partID] = partInfo
+				}
+			}
+		}
+
 		snapshot.Topics[meta.name] = topicStatus
 		processedTopics++
 	}
@@ -460,7 +474,13 @@ func (t *TopicTracker) applyGlobalRecord(key string, value []byte) {
 			logging.Warn("applyGlobalRecord: failed to unmarshal topic state for key %s: %v", key, err)
 			return
 		}
-		t.globalTopics[state.Topic] = buildTopicStatusFromStatePartitions(state.Topic, state.Timestamp, state.Partitions)
+		incoming := buildTopicStatusFromStatePartitions(state.Topic, state.Timestamp, state.Partitions)
+		// Merge rather than replace: preserve partition data from the existing
+		// global state for any partitions absent in the incoming record. This
+		// guards against partial writes (e.g. records written by a single
+		// instance that only owns a subset of the topic's partitions) silently
+		// discarding state for partitions owned by other instances.
+		t.globalTopics[state.Topic] = mergeGlobalTopicRecord(t.globalTopics[state.Topic], incoming)
 	}
 
 	t.globalSnapshot.Store(t.buildGlobalSnapshotLocked())
@@ -568,6 +588,54 @@ func buildTopicStatusFromStatePartitions(topicName string, ts int64, partitions 
 		topicStatus.NewestPartitionAge = models.CalculateDuration(time.Unix(newestTimestamp, 0).UTC())
 	}
 	return topicStatus
+}
+
+// mergeGlobalTopicRecord returns a TopicStatus that contains all partitions from
+// incoming, plus any partitions from existing that are absent in the incoming
+// record. The incoming record takes precedence for every partition it covers.
+// Aggregate fields (PartitionCount, oldest/newest ages) are recomputed from the
+// full merged set so the result is always self-consistent.
+//
+// This prevents a write from one instance — which only covers its owned
+// partitions — from inadvertently discarding state for partitions held by other
+// instances that was already present in the global snapshot.
+func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.TopicStatus {
+	if existing == nil {
+		return incoming
+	}
+
+	merged := &models.TopicStatus{
+		Name:       incoming.Name,
+		LastUpdate: incoming.LastUpdate,
+		Partitions: make(map[int32]*models.PartitionInfo, len(incoming.Partitions)+len(existing.Partitions)),
+	}
+
+	for partID, partInfo := range incoming.Partitions {
+		merged.Partitions[partID] = partInfo
+	}
+	for partID, partInfo := range existing.Partitions {
+		if _, present := merged.Partitions[partID]; !present {
+			merged.Partitions[partID] = partInfo
+		}
+	}
+
+	merged.PartitionCount = int32(len(merged.Partitions))
+	var oldest, newest int64
+	for _, part := range merged.Partitions {
+		if oldest == 0 || part.Timestamp < oldest {
+			oldest = part.Timestamp
+		}
+		if newest == 0 || part.Timestamp > newest {
+			newest = part.Timestamp
+		}
+	}
+	if oldest > 0 {
+		merged.OldestPartitionAge = models.CalculateDuration(time.Unix(oldest, 0).UTC())
+	}
+	if newest > 0 {
+		merged.NewestPartitionAge = models.CalculateDuration(time.Unix(newest, 0).UTC())
+	}
+	return merged
 }
 
 func (t *TopicTracker) syncInstancesFromState(snapshot *kafka.StateSnapshot) {

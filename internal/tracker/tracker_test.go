@@ -342,3 +342,178 @@ func TestSyncInstancesFromStateLoadsGroupIDAndShards(t *testing.T) {
 		t.Errorf("expected AssignedShards=2, got %d", instances[0].AssignedShards)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// mergeGlobalTopicRecord
+// ---------------------------------------------------------------------------
+
+func TestMergeGlobalTopicRecordNilExistingReturnsIncoming(t *testing.T) {
+	now := time.Date(2026, time.March, 30, 10, 0, 0, 0, time.UTC)
+	incoming := &models.TopicStatus{
+		Name:       "topic-x",
+		LastUpdate: now.Unix(),
+		Partitions: map[int32]*models.PartitionInfo{
+			0: {Partition: 0, Offset: 10, Timestamp: now.Unix()},
+		},
+		PartitionCount: 1,
+	}
+
+	merged := mergeGlobalTopicRecord(nil, incoming)
+	if merged != incoming {
+		t.Fatal("expected nil existing to return incoming unchanged")
+	}
+}
+
+func TestMergeGlobalTopicRecordKeepsExistingPartitionsAbsentFromIncoming(t *testing.T) {
+	now := time.Date(2026, time.March, 30, 10, 0, 0, 0, time.UTC)
+	existing := &models.TopicStatus{
+		Name:       "topic-x",
+		LastUpdate: now.Unix(),
+		Partitions: map[int32]*models.PartitionInfo{
+			0: {Partition: 0, Offset: 50, Timestamp: now.Add(-24 * time.Hour).Unix()},
+			1: {Partition: 1, Offset: 60, Timestamp: now.Add(-12 * time.Hour).Unix()},
+		},
+		PartitionCount: 2,
+	}
+	incoming := &models.TopicStatus{
+		Name:       "topic-x",
+		LastUpdate: now.Unix(),
+		Partitions: map[int32]*models.PartitionInfo{
+			2: {Partition: 2, Offset: 100, Timestamp: now.Unix()},
+			3: {Partition: 3, Offset: 200, Timestamp: now.Unix()},
+		},
+		PartitionCount: 2,
+	}
+
+	merged := mergeGlobalTopicRecord(existing, incoming)
+
+	if merged.PartitionCount != 4 {
+		t.Errorf("expected PartitionCount=4, got %d", merged.PartitionCount)
+	}
+	if len(merged.Partitions) != 4 {
+		t.Errorf("expected 4 partitions, got %d", len(merged.Partitions))
+	}
+	for _, id := range []int32{0, 1, 2, 3} {
+		if _, ok := merged.Partitions[id]; !ok {
+			t.Errorf("expected partition %d in merged result", id)
+		}
+	}
+}
+
+func TestMergeGlobalTopicRecordIncomingPartitionsOverrideExisting(t *testing.T) {
+	now := time.Date(2026, time.March, 30, 10, 0, 0, 0, time.UTC)
+	existing := &models.TopicStatus{
+		Name:       "topic-x",
+		LastUpdate: now.Add(-time.Hour).Unix(),
+		Partitions: map[int32]*models.PartitionInfo{
+			0: {Partition: 0, Offset: 50, Timestamp: now.Add(-time.Hour).Unix()},
+		},
+		PartitionCount: 1,
+	}
+	incoming := &models.TopicStatus{
+		Name:       "topic-x",
+		LastUpdate: now.Unix(),
+		Partitions: map[int32]*models.PartitionInfo{
+			0: {Partition: 0, Offset: 100, Timestamp: now.Unix()},
+		},
+		PartitionCount: 1,
+	}
+
+	merged := mergeGlobalTopicRecord(existing, incoming)
+
+	if merged.Partitions[0].Offset != 100 {
+		t.Errorf("expected incoming offset=100 to win, got %d", merged.Partitions[0].Offset)
+	}
+}
+
+func TestMergeGlobalTopicRecordRecalculatesPartitionCount(t *testing.T) {
+	now := time.Date(2026, time.March, 30, 10, 0, 0, 0, time.UTC)
+	existing := &models.TopicStatus{
+		Name:       "topic-x",
+		Partitions: map[int32]*models.PartitionInfo{
+			1: {Partition: 1, Offset: 10, Timestamp: now.Unix()},
+		},
+		PartitionCount: 1,
+	}
+	incoming := &models.TopicStatus{
+		Name:       "topic-x",
+		LastUpdate: now.Unix(),
+		Partitions: map[int32]*models.PartitionInfo{
+			0: {Partition: 0, Offset: 20, Timestamp: now.Unix()},
+		},
+		PartitionCount: 1,
+	}
+
+	merged := mergeGlobalTopicRecord(existing, incoming)
+
+	if int(merged.PartitionCount) != len(merged.Partitions) {
+		t.Errorf("PartitionCount=%d but len(Partitions)=%d; should match", merged.PartitionCount, len(merged.Partitions))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// applyGlobalRecord — multi-instance partition accumulation
+// ---------------------------------------------------------------------------
+
+// TestApplyGlobalRecordMergesPartitionsAcrossInstances verifies that successive
+// writes from two instances covering different partitions of the same topic are
+// accumulated in the global snapshot rather than the later write discarding the
+// earlier one.
+func TestApplyGlobalRecordMergesPartitionsAcrossInstances(t *testing.T) {
+	tt := newTestTracker("inst-1")
+	now := time.Date(2026, time.March, 30, 10, 0, 0, 0, time.UTC)
+
+	// Instance A owns partitions 0 and 1.
+	valueA := mustMarshalTopicState(t, "events", now, map[int32]kafka.PartitionState{
+		0: {Partition: 0, Offset: 10, Timestamp: now.Unix()},
+		1: {Partition: 1, Offset: 20, Timestamp: now.Unix()},
+	})
+	tt.applyGlobalRecord("events", valueA)
+
+	// Instance B owns partitions 2 and 3 — its write must not erase 0 and 1.
+	valueB := mustMarshalTopicState(t, "events", now, map[int32]kafka.PartitionState{
+		2: {Partition: 2, Offset: 30, Timestamp: now.Unix()},
+		3: {Partition: 3, Offset: 40, Timestamp: now.Unix()},
+	})
+	tt.applyGlobalRecord("events", valueB)
+
+	topic := tt.globalSnapshot.Load().Topics["events"]
+	if topic == nil {
+		t.Fatal("topic 'events' missing from global snapshot")
+	}
+	if topic.PartitionCount != 4 {
+		t.Errorf("expected PartitionCount=4, got %d", topic.PartitionCount)
+	}
+	for _, id := range []int32{0, 1, 2, 3} {
+		if _, ok := topic.Partitions[id]; !ok {
+			t.Errorf("expected partition %d in global snapshot after multi-instance writes", id)
+		}
+	}
+}
+
+// TestApplyGlobalRecordSubsequentUpdateForSamePartitionOverwrites verifies that
+// a later write for a partition that already exists in the global snapshot
+// takes precedence (incoming wins for owned partitions).
+func TestApplyGlobalRecordSubsequentUpdateForSamePartitionOverwrites(t *testing.T) {
+	tt := newTestTracker("inst-1")
+	now := time.Date(2026, time.March, 30, 10, 0, 0, 0, time.UTC)
+
+	first := mustMarshalTopicState(t, "orders", now, map[int32]kafka.PartitionState{
+		0: {Partition: 0, Offset: 50, Timestamp: now.Unix()},
+	})
+	tt.applyGlobalRecord("orders", first)
+
+	later := mustMarshalTopicState(t, "orders", now.Add(time.Minute), map[int32]kafka.PartitionState{
+		0: {Partition: 0, Offset: 100, Timestamp: now.Add(time.Minute).Unix()},
+	})
+	tt.applyGlobalRecord("orders", later)
+
+	topic := tt.globalSnapshot.Load().Topics["orders"]
+	if topic == nil {
+		t.Fatal("topic 'orders' missing from global snapshot")
+	}
+	if topic.Partitions[0].Offset != 100 {
+		t.Errorf("expected updated offset=100, got %d", topic.Partitions[0].Offset)
+	}
+}
+
