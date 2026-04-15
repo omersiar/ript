@@ -197,7 +197,7 @@ func (b *WorkloadBalancer) pollLoop(ctx context.Context) {
 			return
 		}
 
-		pollCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		pollCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		fetches := client.PollFetches(pollCtx)
 		cancel()
 
