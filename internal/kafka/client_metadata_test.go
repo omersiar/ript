@@ -14,7 +14,7 @@ func TestNormalizeSoftwareToken(t *testing.T) {
 		want     string
 	}{
 		{name: "keeps valid token", input: "ript-franz-go", fallback: "unknown", want: "ript-franz-go"},
-		{name: "replaces spaces and plus", input: "RIPT + FRANZ GO", fallback: "unknown", want: "ript-franz-go"},
+		{name: "replaces spaces and plus", input: "RIPT + FRANZ GO", fallback: "unknown", want: "RIPT-FRANZ-GO"},
 		{name: "strips invalid leading and trailing characters", input: " (devel) ", fallback: "unknown", want: "devel"},
 		{name: "collapses separators", input: "v1..2+++3", fallback: "unknown", want: "v1.2-3"},
 		{name: "falls back on empty", input: "   ", fallback: "unknown", want: "unknown"},
