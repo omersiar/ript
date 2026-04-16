@@ -131,10 +131,8 @@ func NewClientWithConfig(cfg ClientConfig) (*Client, error) {
 		return nil, fmt.Errorf("failed to connect to Kafka brokers: %w", err)
 	}
 
-	logging.Info("Kafka client connected: client_id=%s software_name=%s software_version=%s",
+	logging.Info("Kafka client connected: client_id=%s",
 		strings.TrimSpace(cfg.ClientID),
-		softwareName,
-		softwareVersion,
 	)
 
 	return c, nil

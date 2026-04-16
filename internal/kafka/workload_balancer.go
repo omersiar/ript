@@ -141,7 +141,7 @@ func (b *WorkloadBalancer) Start(ctx context.Context) error {
 	b.wg.Add(1)
 	go b.pollLoop(ctx)
 
-	logging.Info("Workload balancer Kafka client connected: client_id=%s software_name=%s software_version=%s", b.clientID, softwareName, softwareVersion)
+	logging.Info("Workload balancer Kafka client connected: client_id=%s", b.clientID)
 	logging.Info("Workload balancer started: group=%s topic=%s client_id=%s", b.consumerGroupID, b.trackerTopic, b.clientID)
 	return nil
 }

@@ -453,7 +453,6 @@ func (sm *StateManager) LoadLatestSnapshot(ctx context.Context) (*StateSnapshot,
 	}
 
 	// Dedicated consumer so we never mutate the shared client's consumer state.
-	softwareName, softwareVersion := softwareNameAndVersion()
 	consumerOpts, consumerClientID := sm.buildConsumerOpts("state-load", consumeMap)
 	consumerClient, err := kgo.NewClient(consumerOpts...)
 	if err != nil {
@@ -461,10 +460,8 @@ func (sm *StateManager) LoadLatestSnapshot(ctx context.Context) (*StateSnapshot,
 		return nil, stats, fmt.Errorf("failed to create consumer client for state load: %w", err)
 	}
 	defer consumerClient.Close()
-	logging.Info("State load Kafka client connected: client_id=%s software_name=%s software_version=%s",
+	logging.Info("State load Kafka client connected: client_id=%s",
 		consumerClientID,
-		softwareName,
-		softwareVersion,
 	)
 
 	// Track the highest record offset seen per active partition.
@@ -624,11 +621,8 @@ func (sm *StateManager) SubscribeGlobalUpdates(ctx context.Context, startOffsets
 	}
 	defer consumerClient.Close()
 
-	softwareName, softwareVersion := softwareNameAndVersion()
-	logging.Info("Global updates Kafka client connected: client_id=%s software_name=%s software_version=%s",
+	logging.Info("Global updates Kafka client connected: client_id=%s",
 		consumerClientID,
-		softwareName,
-		softwareVersion,
 	)
 
 	logging.Debug("SubscribeGlobalUpdates: tailing tracker topic from %d partition(s)", len(partitions))

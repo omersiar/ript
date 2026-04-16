@@ -4,11 +4,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.1 - 2026-04-16
 
 ### Added
 
-- Kafka clientSoftwareName and Version
+- Kafka clientSoftwareName and Version required by the KIP-714 with a caveat see Known Issues below
+
+### Fixed
+
+- Timestamps were resetting when multiple instances of RIPT are running
+
+### Changed
+
+- Upgraded Go 1.26
+- Upgraded franz-go v1.20.7
+- Upgraded Gin v1.12.0
+- Stale partitions in topic detail modal are now colored as yellow, consistent with table view
+
+### Known Issues
+
+- SoftwareNameAndVersion not propagated to internal group coordinator connection ([bug at franz-go module](https://github.com/twmb/franz-go/issues/1296))
 
 ## v0.0.2 - 2026-04-11
 
