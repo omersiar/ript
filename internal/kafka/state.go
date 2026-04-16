@@ -524,7 +524,7 @@ func (sm *StateManager) LoadLatestSnapshot(ctx context.Context) (*StateSnapshot,
 	finalizeStateLoadStats(snapshot, stats, seenKeys, start)
 	stats.Completed = true
 
-	logging.Info("Loaded state: %d topics from %d partition(s)", len(snapshot.Topics), len(activePartitions))
+	logging.Info("Loaded state: %d topics from %d of %d tracker partition(s) with data", len(snapshot.Topics), len(activePartitions), len(partitions))
 	return snapshot, stats, nil
 }
 

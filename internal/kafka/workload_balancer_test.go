@@ -6,6 +6,45 @@ import (
 	"time"
 )
 
+func TestWorkloadShardUsesPartitionInHash(t *testing.T) {
+	const shardCount int32 = 6
+	seen := make(map[int32]struct{})
+
+	for partition := int32(0); partition < 32; partition++ {
+		seen[workloadShard("orders", partition, shardCount)] = struct{}{}
+	}
+
+	if len(seen) <= 1 {
+		t.Fatalf("expected same topic to spread across multiple shards, got %d", len(seen))
+	}
+}
+
+func TestOwnsTopicPartitionCanSplitSameTopicAcrossAssignments(t *testing.T) {
+	b := &WorkloadBalancer{
+		consumerGroupID:   "group-a",
+		trackerPartitions: 6,
+		assignedShards:    map[int32]struct{}{2: {}},
+	}
+
+	var ownedPartition int32 = -1
+	var unownedPartition int32 = -1
+
+	for partition := int32(0); partition < 128; partition++ {
+		if b.OwnsTopicPartition("orders", partition) {
+			ownedPartition = partition
+		} else {
+			unownedPartition = partition
+		}
+		if ownedPartition >= 0 && unownedPartition >= 0 {
+			break
+		}
+	}
+
+	if ownedPartition < 0 || unownedPartition < 0 {
+		t.Fatal("expected to find both owned and unowned partitions for same topic")
+	}
+}
+
 func TestWorkloadBalancerMarksRebalancingOnRevokeAndCompletesOnAssign(t *testing.T) {
 	b := &WorkloadBalancer{
 		consumerGroupID: "group-a",

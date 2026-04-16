@@ -324,7 +324,7 @@ func (b *WorkloadBalancer) WaitForAssignments(ctx context.Context, timeout time.
 }
 
 func (b *WorkloadBalancer) OwnsTopicPartition(topic string, partition int32) bool {
-	shard := workloadShard(topic, b.trackerPartitions)
+	shard := workloadShard(topic, partition, b.trackerPartitions)
 	b.mu.RLock()
 	_, ok := b.assignedShards[shard]
 	b.mu.RUnlock()
@@ -341,12 +341,14 @@ func (b *WorkloadBalancer) GroupID() string {
 	return b.consumerGroupID
 }
 
-func workloadShard(topic string, shardCount int32) int32 {
+func workloadShard(topic string, partition int32, shardCount int32) int32 {
 	if shardCount <= 1 {
 		return 0
 	}
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(topic))
+	_, _ = h.Write([]byte("#"))
+	_, _ = h.Write([]byte(fmt.Sprintf("%d", partition)))
 	return int32(h.Sum32() % uint32(shardCount))
 }
 

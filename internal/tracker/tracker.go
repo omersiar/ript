@@ -95,7 +95,7 @@ func (t *TopicTracker) Start(ctx context.Context) error {
 			if loadStats.TimedOut {
 				status = "partial_timeout"
 			}
-			logging.Info("State replay stats: total_messages=%d duplicate_keys=%d discarded=%d tombstones=%d unique_keys=%d malformed=%d partitions=%d duration_ms=%d final_topics=%d final_instances=%d status=%s",
+			logging.Info("State replay stats: total_messages=%d duplicate_keys=%d discarded=%d tombstones=%d unique_keys=%d malformed=%d partitions_with_data=%d duration_ms=%d final_topics=%d final_instances=%d status=%s",
 				loadStats.TotalRecords,
 				loadStats.DuplicateKeyRecords,
 				loadStats.DiscardedRecords,
@@ -208,8 +208,11 @@ func (t *TopicTracker) prepareForScan(ctx context.Context) error {
 		return nil
 	}
 
-	if !t.workloadBalancer.WaitForStableAssignments(ctx, 10*time.Second) {
+	if !t.workloadBalancer.WaitForStableAssignments(ctx, 30*time.Second) {
 		return fmt.Errorf("consumer group rebalance still in progress")
+	}
+	if t.workloadBalancer.AssignedShardCount() == 0 {
+		return fmt.Errorf("no shards assigned after rebalance stabilization")
 	}
 
 	epoch := t.workloadBalancer.AssignmentEpoch()
@@ -247,7 +250,7 @@ func (t *TopicTracker) replayState(ctx context.Context) error {
 		if loadStats.TimedOut {
 			status = "partial_timeout"
 		}
-		logging.Info("Post-rebalance state replay stats: total_messages=%d duplicate_keys=%d discarded=%d tombstones=%d unique_keys=%d malformed=%d partitions=%d duration_ms=%d final_topics=%d final_instances=%d status=%s",
+		logging.Info("Post-rebalance state replay stats: total_messages=%d duplicate_keys=%d discarded=%d tombstones=%d unique_keys=%d malformed=%d partitions_with_data=%d duration_ms=%d final_topics=%d final_instances=%d status=%s",
 			loadStats.TotalRecords,
 			loadStats.DuplicateKeyRecords,
 			loadStats.DiscardedRecords,
@@ -337,7 +340,11 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 	// with an empty/partial view in that window, otherwise unchanged partitions
 	// lose their previous timestamps and ages reset on the next scan.
 	if len(ownedTopicPartitions) == 0 {
-		logging.Warn("Skipping scan cycle: no owned topic partitions assigned (likely rebalance in progress)")
+		assignedShards := 0
+		if t.workloadBalancer != nil {
+			assignedShards = t.workloadBalancer.AssignedShardCount()
+		}
+		logging.Warn("Skipping scan cycle: no owned topic partitions assigned (assigned_shards=%d)", assignedShards)
 		return nil
 	}
 
