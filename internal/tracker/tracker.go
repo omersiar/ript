@@ -720,6 +720,33 @@ func (t *TopicTracker) GetSnapshot() *models.ClusterSnapshot {
 	return t.globalSnapshot.Load()
 }
 
+// BuildTopicStatusesFromSnapshot converts a raw StateSnapshot into TopicStatus
+// values with computed ages, reusing the same conversion performed during daemon
+// startup. Intended for CLI commands that load state without starting the daemon.
+func BuildTopicStatusesFromSnapshot(snapshot *kafka.StateSnapshot) map[string]*models.TopicStatus {
+	result := make(map[string]*models.TopicStatus, len(snapshot.Topics))
+	for topicName, partitions := range snapshot.Topics {
+		result[topicName] = buildTopicStatusFromStatePartitions(topicName, snapshot.Timestamp, partitions)
+	}
+	return result
+}
+
+// RunOnceScan performs exactly one scan cycle without starting daemon loops.
+// It ensures the tracker topic exists, replays previous state for timestamp
+// continuity, fetches current metadata and offsets for all topics, persists the
+// updated snapshot to the tracker topic, and emits tombstones for deleted topics.
+// Safe to call on a tracker that has not been Start()ed.
+func (t *TopicTracker) RunOnceScan(ctx context.Context) error {
+	if err := t.stateManager.EnsureTrackerTopic(ctx); err != nil {
+		logging.Warn("Could not ensure tracker topic: %v", err)
+	}
+	snapshot, _, err := t.stateManager.LoadLatestSnapshot(ctx)
+	if err == nil && snapshot != nil {
+		t.syncGlobalFromState(snapshot)
+	}
+	return t.scanTopics(ctx)
+}
+
 func previousPartitionInfo(snapshot *models.ClusterSnapshot, topicName string, partID int32) *models.PartitionInfo {
 	if snapshot == nil {
 		return nil
