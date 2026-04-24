@@ -13,6 +13,7 @@ type TopicStatus struct {
 	OldestPartitionAge Duration                 `json:"oldest_partition_age"`
 	NewestPartitionAge Duration                 `json:"newest_partition_age"`
 	LastUpdate         int64                    `json:"last_update"`
+	IsEmpty            bool                     `json:"is_empty"`
 }
 
 type PartitionInfo struct {
@@ -20,6 +21,7 @@ type PartitionInfo struct {
 	Offset    int64    `json:"offset"`
 	Timestamp int64    `json:"timestamp"`
 	Age       Duration `json:"age"`
+	IsEmpty   bool     `json:"is_empty"`
 }
 
 type ClusterSnapshot struct {

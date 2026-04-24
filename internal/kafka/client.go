@@ -585,6 +585,66 @@ func newLatestOffsetPartitionRequest(partition int32) kmsg.ListOffsetsRequestTop
 	return partReq
 }
 
+// newEarliestOffsetPartitionRequest creates a ListOffsets partition request using
+// franz-go defaults (notably CurrentLeaderEpoch=-1) and asks for the earliest
+// available offset (log start offset).
+func newEarliestOffsetPartitionRequest(partition int32) kmsg.ListOffsetsRequestTopicPartition {
+	partReq := kmsg.NewListOffsetsRequestTopicPartition()
+	partReq.Partition = partition
+	partReq.Timestamp = -2 // -2 = earliest (log start offset)
+	return partReq
+}
+
+// GetEarliestWatermarksBatch fetches the log-start offset (earliest available
+// offset) for all partitions of all provided topics in a single sharded request.
+// Franz-go automatically splits the ListOffsetsRequest by partition leader and
+// sends one sub-request per broker, so this is always 1 logical call regardless
+// of topic or broker count.
+//
+// Broker-level failures are returned as errors. Per-partition error codes are
+// logged as warnings and those partitions are omitted from the result.
+func (c *Client) GetEarliestWatermarksBatch(ctx context.Context, topics map[string][]int32) (map[string]map[int32]int64, error) {
+	if len(topics) == 0 {
+		return map[string]map[int32]int64{}, nil
+	}
+
+	reqTopics := make([]kmsg.ListOffsetsRequestTopic, 0, len(topics))
+	for topicName, partitions := range topics {
+		partReqs := make([]kmsg.ListOffsetsRequestTopicPartition, len(partitions))
+		for i, p := range partitions {
+			partReqs[i] = newEarliestOffsetPartitionRequest(p)
+		}
+		reqTopics = append(reqTopics, kmsg.ListOffsetsRequestTopic{
+			Topic:      topicName,
+			Partitions: partReqs,
+		})
+	}
+
+	req := &kmsg.ListOffsetsRequest{Topics: reqTopics}
+	shards := c.client.RequestSharded(ctx, req)
+
+	result := make(map[string]map[int32]int64, len(topics))
+	for _, shard := range shards {
+		if shard.Err != nil {
+			return nil, fmt.Errorf("failed to list earliest offsets from broker %s:%d: %w", shard.Meta.Host, shard.Meta.Port, shard.Err)
+		}
+		offsetResp := shard.Resp.(*kmsg.ListOffsetsResponse)
+		for _, tr := range offsetResp.Topics {
+			if result[tr.Topic] == nil {
+				result[tr.Topic] = make(map[int32]int64)
+			}
+			for _, pr := range tr.Partitions {
+				if pr.ErrorCode != 0 {
+					logging.Warn("Error getting earliest offset for %s partition %d: %v (error code %d)", tr.Topic, pr.Partition, kerr.ErrorForCode(pr.ErrorCode), pr.ErrorCode)
+					continue
+				}
+				result[tr.Topic][pr.Partition] = pr.Offset
+			}
+		}
+	}
+	return result, nil
+}
+
 func isSystemTopic(topic string) bool {
 	if len(topic) == 0 {
 		return false

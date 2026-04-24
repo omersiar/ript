@@ -294,6 +294,41 @@
             color: #f8f8f8;
         }
 
+        .badge-empty {
+            background: #cff4fc;
+            color: #055160;
+        }
+
+        .filter-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            border-radius: 999px;
+            border: 1.5px solid var(--line);
+            background: var(--surface);
+            color: var(--ink-muted);
+            font-size: 0.76rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            padding: 0.3rem 0.75rem;
+            cursor: pointer;
+            transition: background 0.12s, border-color 0.12s, color 0.12s;
+            user-select: none;
+            white-space: nowrap;
+        }
+
+        .filter-chip:hover {
+            border-color: #aaa;
+            color: var(--ink);
+        }
+
+        .filter-chip.active {
+            background: #cff4fc;
+            border-color: #9ee8f8;
+            color: #055160;
+        }
+
         .error {
             background: #2a0d0f;
             color: #ffd8da;
@@ -471,7 +506,7 @@
         </div>
 
         <div class="panel">
-            <div class="topics-search-row">
+            <div class="topics-search-row d-flex flex-wrap align-items-end gap-3">
                 <div class="panel-tool-group search-group">
                     <label for="topicSearch" class="form-label">Search Topics</label>
                     <div class="search-input-wrap">
@@ -479,6 +514,9 @@
                         <button type="button" class="search-clear-btn" id="searchClearBtn" style="display:none;" aria-label="Clear search">&times;</button>
                     </div>
                     <div id="searchError" class="text-danger small mt-1" style="display:none;"></div>
+                </div>
+                <div class="pb-1">
+                    <button type="button" class="filter-chip" id="emptyOnlyToggle" aria-pressed="false" title="Show only topics where all partitions have no records">Empty only</button>
                 </div>
             </div>
             <div class="table-responsive">
@@ -558,6 +596,7 @@
                 </div>
                 <div class="modal-body">
                     <div id="topicDetailsMeta" class="subtle mb-3"></div>
+                    <div id="topicEmptyBanner" style="display:none;background:#cff4fc;border:1px solid #9ee8f8;color:#055160;border-radius:8px;" class="py-2 px-3 mb-3 small" role="alert"><strong>This topic is empty.</strong> All partitions report no records (earliest offset = latest offset).</div>
                     <div class="table-responsive">
                         <table class="table table-sm table-hover">
                             <thead>
@@ -611,7 +650,8 @@
         const SETTINGS_KEYS = {
             stale: 'ript.staleDays',
             unused: 'ript.unusedDays',
-            pageSize: 'ript.pageSize'
+            pageSize: 'ript.pageSize',
+            emptyOnly: 'ript.emptyOnly'
         };
         const FALLBACK_DEFAULTS = {
             staleDays: 7,
@@ -633,6 +673,7 @@
         let sortDirection = 'asc';
         let searchQuery = '';
         let searchDebounceTimer = null;
+        let emptyOnlyFilter = false;
 
         const instanceDetailsModal = new bootstrap.Modal(document.getElementById('instanceDetailsModal'));
         const topicDetailsModal = new bootstrap.Modal(document.getElementById('topicDetailsModal'));
@@ -756,10 +797,12 @@
             const stale = parseInt(localStorage.getItem(SETTINGS_KEYS.stale) || `${DEFAULTS.staleDays}`, 10);
             const unused = parseInt(localStorage.getItem(SETTINGS_KEYS.unused) || `${DEFAULTS.unusedDays}`, 10);
             pageSize = parseInt(localStorage.getItem(SETTINGS_KEYS.pageSize) || `${DEFAULTS.pageSize}`, 10);
+            emptyOnlyFilter = localStorage.getItem(SETTINGS_KEYS.emptyOnly) === 'true';
 
             document.getElementById('staleThresholdSetting').value = stale;
             document.getElementById('unusedThresholdSetting').value = unused;
             document.getElementById('pageSize').value = `${pageSize}`;
+            updateEmptyOnlyToggleUI();
         }
 
         function validateSettings(stale, unused) {
@@ -781,6 +824,19 @@
             setTimeout(() => {
                 errorContainer.innerHTML = '';
             }, 5000);
+        }
+
+        function updateEmptyOnlyToggleUI() {
+            const btn = document.getElementById('emptyOnlyToggle');
+            if (emptyOnlyFilter) {
+                btn.classList.add('active');
+                btn.setAttribute('aria-pressed', 'true');
+                btn.textContent = 'Empty only ×';
+            } else {
+                btn.classList.remove('active');
+                btn.setAttribute('aria-pressed', 'false');
+                btn.textContent = 'Empty only';
+            }
         }
 
         async function loadStats() {
@@ -910,7 +966,8 @@
                 params.set('search', searchQuery);
             }
 
-            return `${API_BASE}/topics?${params.toString()}`;
+            const endpoint = emptyOnlyFilter ? 'empty' : 'topics';
+            return `${API_BASE}/${endpoint}?${params.toString()}`;
         }
 
         async function loadTopics() {
@@ -938,7 +995,7 @@
                 document.getElementById('topicSearch').classList.remove('is-invalid');
                 const data = await response.json();
 
-                const topics = data.topics || [];
+                const topics = data.topics || data.empty_topics || [];
                 latestTopics = topics;
                 totalItems = data.total ?? topics.length;
                 hasMore = Boolean(data.has_more);
@@ -1038,13 +1095,14 @@
 
             body.innerHTML = topics.map(topic => {
                 const status = getTopicStatus(topic.oldest_partition_timestamp, topic.newest_partition_timestamp, thresholds);
+                const emptyBadge = topic.is_empty ? ' <span class="badge badge-status badge-empty">Empty</span>' : '';
 
                 return `
                     <tr>
                         <td><span class="topic-link" data-topic-name="${escapeHtml(topic.name)}">${escapeHtml(topic.name)}</span></td>
                         <td>${topic.partition_count}</td>
                         <td><code>${formatAge(topic.oldest_partition_timestamp)}</code></td>
-                        <td><span class="badge badge-status ${status.className}">${status.label}</span></td>
+                        <td><span class="badge badge-status ${status.className}">${status.label}</span>${emptyBadge}</td>
                     </tr>
                 `;
             }).join('');
@@ -1053,9 +1111,12 @@
         function renderTopicDetails(topicName, details) {
             const meta = document.getElementById('topicDetailsMeta');
             const tbody = document.getElementById('topicDetailsTableBody');
+            const emptyBanner = document.getElementById('topicEmptyBanner');
             document.getElementById('topicModalTitle').textContent = `Topic: ${topicName}`;
 
             meta.textContent = `Partitions: ${details.partition_count} | Oldest age: ${formatAge(details.oldest_timestamp)} | Last update: ${formatRelativeTime(details.last_update)}`;
+            emptyBanner.style.display = details.is_empty ? '' : 'none';
+
             const partitions = (details.partitions || []).slice().sort((a, b) => a.partition - b.partition);
 
             if (partitions.length === 0) {
@@ -1067,12 +1128,13 @@
             tbody.innerHTML = partitions.map(part => {
                 const ageDays = timestampToAgeDays(part.timestamp);
                 const status = getStatusByAge(ageDays, thresholds);
+                const emptyBadge = part.is_empty ? ' <span class="badge badge-status badge-empty">Empty</span>' : '';
                 return `
                     <tr>
                         <td>${part.partition}</td>
                         <td>${part.offset}</td>
                         <td><code>${formatAge(part.timestamp)}</code></td>
-                        <td><span class="badge badge-status ${status.className}">${status.label}</span></td>
+                        <td><span class="badge badge-status ${status.className}">${status.label}</span>${emptyBadge}</td>
                     </tr>
                 `;
             }).join('');
@@ -1190,6 +1252,14 @@
             currentPage = 1;
             await loadTopics();
             input.focus();
+        });
+
+        document.getElementById('emptyOnlyToggle').addEventListener('click', async () => {
+            emptyOnlyFilter = !emptyOnlyFilter;
+            localStorage.setItem(SETTINGS_KEYS.emptyOnly, String(emptyOnlyFilter));
+            updateEmptyOnlyToggleUI();
+            currentPage = 1;
+            await loadTopics();
         });
 
         document.getElementById('topicSearch').addEventListener('keydown', async (event) => {

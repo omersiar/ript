@@ -15,6 +15,7 @@ import (
 
 type listOptions struct {
 	includeStalePartitions bool
+	emptyOnly              bool
 	prefix                 string
 	search                 string
 	regex                  bool
@@ -35,6 +36,7 @@ func newListCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&opts.includeStalePartitions, "include-stale-partitions", false, "Include stale partition details for each topic")
+	cmd.Flags().BoolVar(&opts.emptyOnly, "empty-only", false, "Only list topics where all partitions have no records")
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "Only include topics with this prefix")
 	cmd.Flags().StringVar(&opts.search, "search", "", "Filter topics by substring or regex")
 	cmd.Flags().BoolVar(&opts.regex, "regex", false, "Interpret --search as regex")
@@ -70,7 +72,7 @@ func runList(ctx context.Context, opts *listOptions) error {
 		return err
 	}
 
-	filtered, err := filterAndSortTopics(topics, opts.prefix, opts.search, opts.regex, opts.unusedDays)
+	filtered, err := filterAndSortTopics(topics, opts.prefix, opts.search, opts.regex, opts.unusedDays, opts.emptyOnly)
 	if err != nil {
 		return err
 	}
@@ -85,6 +87,7 @@ func runList(ctx context.Context, opts *listOptions) error {
 type listJSONItem struct {
 	Name              string          `json:"name"`
 	Status            string          `json:"status"`
+	IsEmpty           bool            `json:"is_empty"`
 	PartitionCount    int32           `json:"partition_count"`
 	OldestPartition   string          `json:"oldest_partition_age"`
 	NewestPartition   string          `json:"newest_partition_age"`
@@ -106,6 +109,7 @@ func printListJSON(topics []*models.TopicStatus, opts *listOptions) error {
 		item := listJSONItem{
 			Name:            topic.Name,
 			Status:          classifyTopicStatus(topic, opts.staleDays, opts.unusedDays),
+			IsEmpty:         topic.IsEmpty,
 			PartitionCount:  topic.PartitionCount,
 			OldestPartition: topic.OldestPartitionAge.String(),
 			NewestPartition: topic.NewestPartitionAge.String(),
@@ -142,12 +146,17 @@ func printListJSON(topics []*models.TopicStatus, opts *listOptions) error {
 
 func printListTable(topics []*models.TopicStatus, opts *listOptions) {
 	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "TOPIC\tSTATUS\tPARTITIONS\tSTALE_PARTITIONS\tOLDEST_AGE\tNEWEST_AGE")
+	fmt.Fprintln(w, "TOPIC\tSTATUS\tEMPTY\tPARTITIONS\tSTALE_PARTITIONS\tOLDEST_AGE\tNEWEST_AGE")
 	for _, topic := range topics {
 		stalePartitions := collectStalePartitions(topic, opts.staleDays)
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\t%s\n",
+		emptyVal := "no"
+		if topic.IsEmpty {
+			emptyVal = "yes"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
 			topic.Name,
 			classifyTopicStatus(topic, opts.staleDays, opts.unusedDays),
+			emptyVal,
 			topic.PartitionCount,
 			len(stalePartitions),
 			topic.OldestPartitionAge.String(),
@@ -155,7 +164,7 @@ func printListTable(topics []*models.TopicStatus, opts *listOptions) {
 		)
 		if opts.includeStalePartitions {
 			for _, part := range stalePartitions {
-				fmt.Fprintf(w, "  - p%d\t\t\t\t\t%s (offset=%d)\n", part.Partition, part.Age.String(), part.Offset)
+				fmt.Fprintf(w, "  - p%d\t\t\t\t\t\t%s (offset=%d)\n", part.Partition, part.Age.String(), part.Offset)
 			}
 		}
 	}

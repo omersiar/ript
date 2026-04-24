@@ -138,12 +138,15 @@ paths:
                   - partition: 0
                     offset: 10241
                     timestamp: 1712000100
+                    is_empty: false
                   - partition: 1
                     offset: 11007
                     timestamp: 1712000300
+                    is_empty: false
                 oldest_timestamp: 1712000100
                 newest_timestamp: 1712000300
                 last_update: 1712620800
+                is_empty: false
         '404':
           description: Topic not found
           content:
@@ -222,6 +225,56 @@ paths:
                 page: 1
                 limit: 50
                 has_more: false
+
+  /api/empty:
+    get:
+      tags: [Topics]
+      summary: List empty topics
+      description: Returns topics where all partitions have no records (earliest offset equals latest offset).
+      operationId: listEmptyTopics
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/SortBy'
+        - $ref: '#/components/parameters/SortDir'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/StaleDays'
+        - $ref: '#/components/parameters/UnusedDays'
+      responses:
+        '200':
+          description: Empty topics page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListEmptyTopicsResponse'
+              example:
+                empty_topics:
+                  - name: archived-orders
+                    partition_count: 6
+                    oldest_partition_timestamp: 1706000000
+                    newest_partition_timestamp: 1707000000
+                    is_empty: true
+                count: 1
+                total: 4
+                page: 1
+                limit: 50
+                has_more: false
+        '400':
+          description: Invalid query parameter values
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid limit
+        '503':
+          description: Tracker state not initialized yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: Not yet initialized, connecting to Kafka...
 
   /api/stats:
     get:
@@ -433,6 +486,7 @@ components:
         - partition_count
         - oldest_partition_timestamp
         - newest_partition_timestamp
+        - is_empty
       properties:
         name:
           type: string
@@ -443,6 +497,9 @@ components:
           $ref: '#/components/schemas/UnixTimestamp'
         newest_partition_timestamp:
           $ref: '#/components/schemas/UnixTimestamp'
+        is_empty:
+          type: boolean
+          description: True when all partitions have no records (earliest offset == latest offset for every partition)
 
     PaginationMeta:
       type: object
@@ -505,7 +562,7 @@ components:
 
     TopicPartition:
       type: object
-      required: [partition, offset, timestamp]
+      required: [partition, offset, timestamp, is_empty]
       properties:
         partition:
           type: integer
@@ -515,6 +572,9 @@ components:
           format: int64
         timestamp:
           $ref: '#/components/schemas/UnixTimestamp'
+        is_empty:
+          type: boolean
+          description: True when the earliest offset equals the latest offset (partition has no records)
 
     TopicDetailsResponse:
       type: object
@@ -525,6 +585,7 @@ components:
         - oldest_timestamp
         - newest_timestamp
         - last_update
+        - is_empty
       properties:
         name:
           type: string
@@ -541,6 +602,9 @@ components:
           $ref: '#/components/schemas/UnixTimestamp'
         last_update:
           $ref: '#/components/schemas/UnixTimestamp'
+        is_empty:
+          type: boolean
+          description: True when all partitions have no records (earliest offset == latest offset for every partition)
 
     ListUnusedTopicsResponse:
       allOf:
@@ -583,6 +647,17 @@ components:
             has_more:
               type: boolean
               const: false
+
+    ListEmptyTopicsResponse:
+      allOf:
+        - $ref: '#/components/schemas/PaginationMeta'
+        - type: object
+          required: [empty_topics]
+          properties:
+            empty_topics:
+              type: array
+              items:
+                $ref: '#/components/schemas/TopicSummary'
 
     StatsResponse:
       type: object

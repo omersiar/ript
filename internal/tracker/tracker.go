@@ -43,9 +43,10 @@ type Options struct {
 }
 
 type scanTopicData struct {
-	name       string
-	partitions []int32
-	offsets    map[int32]int64
+	name            string
+	partitions      []int32
+	offsets         map[int32]int64
+	earliestOffsets map[int32]int64
 }
 
 func NewWithOptions(kafkaClient *kafka.Client, stateManager *kafka.StateManager, workloadBalancer *kafka.WorkloadBalancer, scanIntervalMinutes int, opts Options) *TopicTracker {
@@ -348,12 +349,39 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 		return nil
 	}
 
-	// Single sharded ListOffsetsRequest covers all topics/partitions at once,
-	// replacing N per-topic GetHighWatermarks calls.
-	allOffsets, err := t.kafkaClient.GetHighWatermarksBatch(ctx, ownedTopicPartitions)
-	if err != nil {
-		return fmt.Errorf("failed to get high watermarks: %w", err)
+	// Fetch latest (high watermark) and earliest (log-start) offsets in parallel
+	// using two sharded ListOffsetsRequests. Franz-go batches each by broker, so
+	// both are O(brokers), not O(topics). Both results are read before any error
+	// check to ensure goroutines are never leaked.
+	type offsetResult struct {
+		offsets map[string]map[int32]int64
+		err     error
 	}
+
+	latestCh := make(chan offsetResult, 1)
+	earliestCh := make(chan offsetResult, 1)
+
+	go func() {
+		offsets, err := t.kafkaClient.GetHighWatermarksBatch(ctx, ownedTopicPartitions)
+		latestCh <- offsetResult{offsets, err}
+	}()
+	go func() {
+		offsets, err := t.kafkaClient.GetEarliestWatermarksBatch(ctx, ownedTopicPartitions)
+		earliestCh <- offsetResult{offsets, err}
+	}()
+
+	latestResult := <-latestCh
+	earliestResult := <-earliestCh
+
+	if latestResult.err != nil {
+		return fmt.Errorf("failed to get high watermarks: %w", latestResult.err)
+	}
+	if earliestResult.err != nil {
+		return fmt.Errorf("failed to get earliest offsets: %w", earliestResult.err)
+	}
+
+	allOffsets := latestResult.offsets
+	allEarliestOffsets := earliestResult.offsets
 
 	topicData := make([]scanTopicData, 0, len(ownedTopicPartitions))
 	for topicName, ownedPartitions := range ownedTopicPartitions {
@@ -363,9 +391,10 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 			continue
 		}
 		topicData = append(topicData, scanTopicData{
-			name:       topicName,
-			partitions: ownedPartitions,
-			offsets:    offsets,
+			name:            topicName,
+			partitions:      ownedPartitions,
+			offsets:         offsets,
+			earliestOffsets: allEarliestOffsets[topicName],
 		})
 	}
 
@@ -388,8 +417,9 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 			}
 			processedPartitions++
 
+			earliestOffset := meta.earliestOffsets[partID]
 			previous := previousPartitionInfo(previousGlobalSnapshot, meta.name, partID)
-			partInfo := buildPartitionInfo(partID, offset, previous, scanTime)
+			partInfo := buildPartitionInfo(partID, offset, earliestOffset, previous, scanTime)
 
 			topicStatus.Partitions[partID] = partInfo
 
@@ -419,6 +449,17 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 				if _, owned := topicStatus.Partitions[partID]; !owned {
 					topicStatus.Partitions[partID] = partInfo
 				}
+			}
+		}
+
+		// A topic is empty when every partition reports earliest == latest offset.
+		// Non-owned partitions carried over from the global snapshot preserve their
+		// IsEmpty value, so the computation is correct in multi-instance mode too.
+		topicStatus.IsEmpty = len(topicStatus.Partitions) > 0
+		for _, p := range topicStatus.Partitions {
+			if !p.IsEmpty {
+				topicStatus.IsEmpty = false
+				break
 			}
 		}
 
@@ -578,6 +619,7 @@ func buildTopicStatusFromStatePartitions(topicName string, ts int64, partitions 
 			Offset:    part.Offset,
 			Timestamp: part.Timestamp,
 			Age:       age,
+			IsEmpty:   part.IsEmpty,
 		}
 		if oldestTimestamp == 0 || part.Timestamp < oldestTimestamp {
 			oldestTimestamp = part.Timestamp
@@ -594,6 +636,15 @@ func buildTopicStatusFromStatePartitions(topicName string, ts int64, partitions 
 	if newestTimestamp > 0 {
 		topicStatus.NewestPartitionAge = models.CalculateDuration(time.Unix(newestTimestamp, 0).UTC())
 	}
+
+	topicStatus.IsEmpty = len(topicStatus.Partitions) > 0
+	for _, p := range topicStatus.Partitions {
+		if !p.IsEmpty {
+			topicStatus.IsEmpty = false
+			break
+		}
+	}
+
 	return topicStatus
 }
 
@@ -642,6 +693,15 @@ func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.Topi
 	if newest > 0 {
 		merged.NewestPartitionAge = models.CalculateDuration(time.Unix(newest, 0).UTC())
 	}
+
+	merged.IsEmpty = len(merged.Partitions) > 0
+	for _, p := range merged.Partitions {
+		if !p.IsEmpty {
+			merged.IsEmpty = false
+			break
+		}
+	}
+
 	return merged
 }
 
@@ -760,7 +820,7 @@ func previousPartitionInfo(snapshot *models.ClusterSnapshot, topicName string, p
 	return previousTopic.Partitions[partID]
 }
 
-func buildPartitionInfo(partitionID int32, currentOffset int64, previous *models.PartitionInfo, now int64) *models.PartitionInfo {
+func buildPartitionInfo(partitionID int32, currentOffset int64, earliestOffset int64, previous *models.PartitionInfo, now int64) *models.PartitionInfo {
 	timestamp := resolvePartitionTimestamp(previous, currentOffset, now)
 	age := models.CalculateDuration(time.Unix(timestamp, 0).UTC())
 
@@ -769,6 +829,7 @@ func buildPartitionInfo(partitionID int32, currentOffset int64, previous *models
 		Offset:    currentOffset,
 		Timestamp: timestamp,
 		Age:       age,
+		IsEmpty:   earliestOffset == currentOffset,
 	}
 }
 
@@ -803,6 +864,18 @@ func (t *TopicTracker) GetUnusedTopics(unusedDays int) []*models.TopicStatus {
 		}
 	}
 	return unused
+}
+
+func (t *TopicTracker) GetEmptyTopics() []*models.TopicStatus {
+	snapshot := t.globalSnapshot.Load()
+
+	var empty []*models.TopicStatus
+	for _, topic := range snapshot.Topics {
+		if topic.IsEmpty {
+			empty = append(empty, topic)
+		}
+	}
+	return empty
 }
 
 func (t *TopicTracker) GetInstances() []models.InstanceInfo {

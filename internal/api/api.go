@@ -44,6 +44,7 @@ type topicResponse struct {
 	PartitionCount           int32  `json:"partition_count"`
 	OldestPartitionTimestamp int64  `json:"oldest_partition_timestamp"`
 	NewestPartitionTimestamp int64  `json:"newest_partition_timestamp"`
+	IsEmpty                  bool   `json:"is_empty"`
 }
 
 type thresholdValues struct {
@@ -69,6 +70,7 @@ func (s *Server) setupRoutes() {
 	s.router.GET("/api/topics", s.handleListTopics)
 	s.router.GET("/api/topics/:name", s.handleGetTopic)
 	s.router.GET("/api/unused", s.handleGetUnused)
+	s.router.GET("/api/empty", s.handleGetEmpty)
 	s.router.GET("/api/stats", s.handleStats)
 	s.router.GET("/api/instances", s.handleInstances)
 	s.router.GET("/api/ui-config", s.handleUIConfig)
@@ -170,6 +172,7 @@ func (s *Server) handleGetTopic(c *gin.Context) {
 		Partition int32 `json:"partition"`
 		Offset    int64 `json:"offset"`
 		Timestamp int64 `json:"timestamp"`
+		IsEmpty   bool  `json:"is_empty"`
 	}
 
 	var partitions []PartitionResponse
@@ -179,6 +182,7 @@ func (s *Server) handleGetTopic(c *gin.Context) {
 			Partition: part.Partition,
 			Offset:    part.Offset,
 			Timestamp: part.Timestamp,
+			IsEmpty:   part.IsEmpty,
 		})
 		if oldestTS == 0 || part.Timestamp < oldestTS {
 			oldestTS = part.Timestamp
@@ -195,6 +199,7 @@ func (s *Server) handleGetTopic(c *gin.Context) {
 		"oldest_timestamp": oldestTS,
 		"newest_timestamp": newestTS,
 		"last_update":      topic.LastUpdate,
+		"is_empty":         topic.IsEmpty,
 	})
 }
 
@@ -246,6 +251,56 @@ func (s *Server) handleGetUnused(c *gin.Context) {
 		"page":          p.Page,
 		"limit":         p.Limit,
 		"has_more":      hasMore,
+	})
+}
+
+func (s *Server) handleGetEmpty(c *gin.Context) {
+	if !s.ensureTrackerReady(c) {
+		return
+	}
+
+	p, err := s.parsePagination(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	sortBy, sortDir := parseSort(c)
+	searchRe, err := parseSearch(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	emptyTopics := s.trackerPtr.GetEmptyTopics()
+
+	topics := make([]topicResponse, 0, len(emptyTopics))
+	for _, topic := range emptyTopics {
+		r := buildTopicResponse(topic)
+		if searchRe != nil && !searchRe.MatchString(r.Name) {
+			continue
+		}
+		topics = append(topics, r)
+	}
+
+	thresholds, err := s.parseThresholds(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	s.sortTopicResponses(topics, sortBy, sortDir, thresholds.StaleDays, thresholds.UnusedDays)
+
+	total := len(topics)
+	paged, hasMore := paginateTopicResponses(topics, p)
+
+	c.JSON(http.StatusOK, gin.H{
+		"empty_topics": paged,
+		"count":        len(paged),
+		"total":        total,
+		"page":         p.Page,
+		"limit":        p.Limit,
+		"has_more":     hasMore,
 	})
 }
 
@@ -411,6 +466,7 @@ func buildTopicResponse(topic *models.TopicStatus) topicResponse {
 		PartitionCount:           topic.PartitionCount,
 		OldestPartitionTimestamp: oldestTS,
 		NewestPartitionTimestamp: newestTS,
+		IsEmpty:                  topic.IsEmpty,
 	}
 }
 

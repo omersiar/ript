@@ -55,6 +55,26 @@ func TestResolvePartitionTimestampPreservesTimestampWhenOffsetDecreases(t *testi
 	}
 }
 
+func TestBuildPartitionInfoIsEmptyWhenEarliestEqualsLatest(t *testing.T) {
+	now := time.Now().UTC()
+	// latest offset == earliest offset → partition has no records
+	partInfo := buildPartitionInfo(0, 42, 42, nil, now.Unix())
+
+	if !partInfo.IsEmpty {
+		t.Fatal("expected IsEmpty=true when earliest offset equals latest offset")
+	}
+}
+
+func TestBuildPartitionInfoIsNotEmptyWhenOffsetsDiffer(t *testing.T) {
+	now := time.Now().UTC()
+	// latest offset > earliest offset → partition has records
+	partInfo := buildPartitionInfo(0, 42, 0, nil, now.Unix())
+
+	if partInfo.IsEmpty {
+		t.Fatal("expected IsEmpty=false when latest offset is greater than earliest offset")
+	}
+}
+
 // newTestTracker builds a minimal TopicTracker suitable for unit-testing
 // methods that do not require live Kafka connectivity.
 func newTestTracker(instanceID string) *TopicTracker {
@@ -429,7 +449,7 @@ func TestMergeGlobalTopicRecordIncomingPartitionsOverrideExisting(t *testing.T) 
 func TestMergeGlobalTopicRecordRecalculatesPartitionCount(t *testing.T) {
 	now := time.Date(2026, time.March, 30, 10, 0, 0, 0, time.UTC)
 	existing := &models.TopicStatus{
-		Name:       "topic-x",
+		Name: "topic-x",
 		Partitions: map[int32]*models.PartitionInfo{
 			1: {Partition: 1, Offset: 10, Timestamp: now.Unix()},
 		},
@@ -516,4 +536,3 @@ func TestApplyGlobalRecordSubsequentUpdateForSamePartitionOverwrites(t *testing.
 		t.Errorf("expected updated offset=100, got %d", topic.Partitions[0].Offset)
 	}
 }
-

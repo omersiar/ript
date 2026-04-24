@@ -75,7 +75,7 @@ func loadTopicStatusesFromState(ctx context.Context, state *kafka.StateManager) 
 	return tracker.BuildTopicStatusesFromSnapshot(snapshot), nil
 }
 
-func filterAndSortTopics(topics map[string]*models.TopicStatus, prefix string, search string, regexMode bool, unusedDays int) ([]*models.TopicStatus, error) {
+func filterAndSortTopics(topics map[string]*models.TopicStatus, prefix string, search string, regexMode bool, unusedDays int, emptyOnly bool) ([]*models.TopicStatus, error) {
 	matcher, err := newTopicMatcher(prefix, search, regexMode)
 	if err != nil {
 		return nil, err
@@ -83,8 +83,14 @@ func filterAndSortTopics(topics map[string]*models.TopicStatus, prefix string, s
 
 	filtered := make([]*models.TopicStatus, 0, len(topics))
 	for _, topic := range topics {
-		if topic.NewestPartitionAge.Days < unusedDays {
-			continue
+		if emptyOnly {
+			if !topic.IsEmpty {
+				continue
+			}
+		} else {
+			if topic.NewestPartitionAge.Days < unusedDays {
+				continue
+			}
 		}
 		if !matcher(topic.Name) {
 			continue
