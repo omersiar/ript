@@ -116,6 +116,7 @@ type PartitionState struct {
 	Offset    int64 `json:"offset"`
 	Timestamp int64 `json:"timestamp"`
 	IsEmpty   bool  `json:"is_empty"`
+	ScannedAt int64 `json:"scanned_at,omitempty"`
 }
 
 // StateLoadStats summarizes replay details while rebuilding state from the
@@ -271,7 +272,10 @@ func (sm *StateManager) SaveSnapshot(ctx context.Context, snapshot *models.Clust
 			state.Partitions[partID] = PartitionState{
 				Partition: partID,
 				Offset:    partInfo.Offset,
-				Timestamp: partInfo.Timestamp, IsEmpty: partInfo.IsEmpty}
+				Timestamp: partInfo.Timestamp,
+				IsEmpty:   partInfo.IsEmpty,
+				ScannedAt: partInfo.ScannedAt,
+			}
 		}
 
 		data, err := json.Marshal(state)
@@ -319,6 +323,7 @@ func (sm *StateManager) SaveTopicState(ctx context.Context, topicName string, to
 			Offset:    partInfo.Offset,
 			Timestamp: partInfo.Timestamp,
 			IsEmpty:   partInfo.IsEmpty,
+			ScannedAt: partInfo.ScannedAt,
 		}
 	}
 

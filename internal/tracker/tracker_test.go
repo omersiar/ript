@@ -519,12 +519,12 @@ func TestApplyGlobalRecordSubsequentUpdateForSamePartitionOverwrites(t *testing.
 	now := time.Date(2026, time.March, 30, 10, 0, 0, 0, time.UTC)
 
 	first := mustMarshalTopicState(t, "orders", now, map[int32]kafka.PartitionState{
-		0: {Partition: 0, Offset: 50, Timestamp: now.Unix()},
+		0: {Partition: 0, Offset: 50, Timestamp: now.Unix(), ScannedAt: now.Unix()},
 	})
 	tt.applyGlobalRecord("orders", first)
 
 	later := mustMarshalTopicState(t, "orders", now.Add(time.Minute), map[int32]kafka.PartitionState{
-		0: {Partition: 0, Offset: 100, Timestamp: now.Add(time.Minute).Unix()},
+		0: {Partition: 0, Offset: 100, Timestamp: now.Add(time.Minute).Unix(), ScannedAt: now.Add(time.Minute).Unix()},
 	})
 	tt.applyGlobalRecord("orders", later)
 
@@ -534,5 +534,72 @@ func TestApplyGlobalRecordSubsequentUpdateForSamePartitionOverwrites(t *testing.
 	}
 	if topic.Partitions[0].Offset != 100 {
 		t.Errorf("expected updated offset=100, got %d", topic.Partitions[0].Offset)
+	}
+}
+
+// TestMergeGlobalTopicRecordFresherExistingPartitionBeatsIncoming tests that
+// when an incoming record carries a stale (lower ScannedAt) value for a
+// partition — as happens in a concurrent multi-instance scan where Instance B
+// carries Instance A's partition copied from a pre-scan snapshot — the
+// existing global value (written by Instance A with a higher ScannedAt) is
+// preserved rather than overwritten. This is the fix for the concurrent-scan
+// IsEmpty oscillation bug.
+func TestMergeGlobalTopicRecordFresherExistingPartitionBeatsIncoming(t *testing.T) {
+	now := time.Date(2026, time.March, 30, 10, 0, 0, 0, time.UTC)
+	scanTime := now.Unix()
+	oldScanTime := now.Add(-5 * time.Minute).Unix()
+
+	// existing = result of Instance A's fresh scan: partition 0 freshly set to
+	// IsEmpty=true with ScannedAt=scanTime.
+	existing := &models.TopicStatus{
+		Name: "topic-x",
+		Partitions: map[int32]*models.PartitionInfo{
+			0: {Partition: 0, Offset: 0, IsEmpty: true, ScannedAt: scanTime},
+			1: {Partition: 1, Offset: 0, IsEmpty: true, ScannedAt: scanTime},
+		},
+	}
+
+	// incoming = Instance B's write, which carries partition 0 and 1 from the
+	// pre-scan snapshot (stale: IsEmpty=false, ScannedAt=oldScanTime), plus its
+	// own freshly scanned partitions 2 and 3 (IsEmpty=true, ScannedAt=scanTime).
+	incoming := &models.TopicStatus{
+		Name: "topic-x",
+		Partitions: map[int32]*models.PartitionInfo{
+			0: {Partition: 0, Offset: 0, IsEmpty: false, ScannedAt: oldScanTime}, // stale carry-over
+			1: {Partition: 1, Offset: 0, IsEmpty: false, ScannedAt: oldScanTime}, // stale carry-over
+			2: {Partition: 2, Offset: 0, IsEmpty: true, ScannedAt: scanTime},     // freshly scanned
+			3: {Partition: 3, Offset: 0, IsEmpty: true, ScannedAt: scanTime},     // freshly scanned
+		},
+	}
+
+	merged := mergeGlobalTopicRecord(existing, incoming)
+
+	// Partitions 0 and 1: existing (ScannedAt=scanTime) must beat incoming
+	// (ScannedAt=oldScanTime). IsEmpty must remain true.
+	for _, id := range []int32{0, 1} {
+		p := merged.Partitions[id]
+		if p == nil {
+			t.Fatalf("partition %d missing from merged result", id)
+		}
+		if !p.IsEmpty {
+			t.Errorf("partition %d: expected IsEmpty=true (existing fresher), got false", id)
+		}
+		if p.ScannedAt != scanTime {
+			t.Errorf("partition %d: expected ScannedAt=%d, got %d", id, scanTime, p.ScannedAt)
+		}
+	}
+	// Partitions 2 and 3: incoming (freshly scanned) should win.
+	for _, id := range []int32{2, 3} {
+		p := merged.Partitions[id]
+		if p == nil {
+			t.Fatalf("partition %d missing from merged result", id)
+		}
+		if !p.IsEmpty {
+			t.Errorf("partition %d: expected IsEmpty=true (incoming fresher), got false", id)
+		}
+	}
+	// Topic must be empty: all four partitions are empty.
+	if !merged.IsEmpty {
+		t.Error("expected merged topic IsEmpty=true, got false")
 	}
 }

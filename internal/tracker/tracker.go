@@ -620,6 +620,7 @@ func buildTopicStatusFromStatePartitions(topicName string, ts int64, partitions 
 			Timestamp: part.Timestamp,
 			Age:       age,
 			IsEmpty:   part.IsEmpty,
+			ScannedAt: part.ScannedAt,
 		}
 		if oldestTimestamp == 0 || part.Timestamp < oldestTimestamp {
 			oldestTimestamp = part.Timestamp
@@ -668,12 +669,25 @@ func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.Topi
 		Partitions: make(map[int32]*models.PartitionInfo, len(incoming.Partitions)+len(existing.Partitions)),
 	}
 
-	for partID, partInfo := range incoming.Partitions {
-		merged.Partitions[partID] = partInfo
+	for partID, incomingPart := range incoming.Partitions {
+		existingPart, exists := existing.Partitions[partID]
+		// Keep whichever partition was more recently scanned. A higher ScannedAt
+		// means a fresher observation from the owning instance. This prevents a
+		// concurrent scan from overwriting a valid IsEmpty (or offset) with a
+		// stale carried-over value: the instance that actually owns a partition
+		// always writes it with ScannedAt=now, which beats any carried-over copy
+		// that retains the previous scan's ScannedAt.
+		// When ScannedAt values are equal (e.g. both zero in old state records),
+		// incoming takes precedence to preserve the existing write-ordering behaviour.
+		if !exists || incomingPart.ScannedAt >= existingPart.ScannedAt {
+			merged.Partitions[partID] = incomingPart
+		} else {
+			merged.Partitions[partID] = existingPart
+		}
 	}
-	for partID, partInfo := range existing.Partitions {
+	for partID, existingPart := range existing.Partitions {
 		if _, present := merged.Partitions[partID]; !present {
-			merged.Partitions[partID] = partInfo
+			merged.Partitions[partID] = existingPart
 		}
 	}
 
@@ -830,6 +844,7 @@ func buildPartitionInfo(partitionID int32, currentOffset int64, earliestOffset i
 		Timestamp: timestamp,
 		Age:       age,
 		IsEmpty:   earliestOffset == currentOffset,
+		ScannedAt: now,
 	}
 }
 

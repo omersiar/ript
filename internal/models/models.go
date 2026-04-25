@@ -22,6 +22,7 @@ type PartitionInfo struct {
 	Timestamp int64    `json:"timestamp"`
 	Age       Duration `json:"age"`
 	IsEmpty   bool     `json:"is_empty"`
+	ScannedAt int64    `json:"scanned_at,omitempty"`
 }
 
 type ClusterSnapshot struct {
