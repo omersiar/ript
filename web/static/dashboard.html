@@ -527,10 +527,11 @@
                             <th data-sort="partitions">Partitions</th>
                             <th data-sort="age">Oldest Partition Age</th>
                             <th data-sort="status">Status</th>
+                            <th data-sort="empty">Empty</th>
                         </tr>
                     </thead>
                     <tbody id="topicsTableBody">
-                        <tr><td colspan="4" class="loading">Loading topics...</td></tr>
+                        <tr><td colspan="5" class="loading">Loading topics...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -605,10 +606,11 @@
                                     <th>Offset</th>
                                     <th>Age</th>
                                     <th>Status</th>
+                                    <th>Empty</th>
                                 </tr>
                             </thead>
                             <tbody id="topicDetailsTableBody">
-                                <tr><td colspan="4" class="loading">Select a topic to view partition details.</td></tr>
+                                <tr><td colspan="5" class="loading">Select a topic to view partition details.</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -1081,7 +1083,7 @@
             const topicsTable = document.getElementById('topicsTable');
 
             if (!topics || topics.length === 0) {
-                body.innerHTML = '<tr><td colspan="4" class="loading">No results.</td></tr>';
+                body.innerHTML = '<tr><td colspan="5" class="loading">No results.</td></tr>';
                 emptyState.style.display = 'block';
                 topicsTable.style.display = 'none';
                 return;
@@ -1095,14 +1097,15 @@
 
             body.innerHTML = topics.map(topic => {
                 const status = getTopicStatus(topic.oldest_partition_timestamp, topic.newest_partition_timestamp, thresholds);
-                const emptyBadge = topic.is_empty ? ' <span class="badge badge-status badge-empty">Empty</span>' : '';
+                const emptyBadge = topic.is_empty ? '<span class="badge badge-status badge-empty">Empty</span>' : '-';
 
                 return `
                     <tr>
                         <td><span class="topic-link" data-topic-name="${escapeHtml(topic.name)}">${escapeHtml(topic.name)}</span></td>
                         <td>${topic.partition_count}</td>
                         <td><code>${formatAge(topic.oldest_partition_timestamp)}</code></td>
-                        <td><span class="badge badge-status ${status.className}">${status.label}</span>${emptyBadge}</td>
+                        <td><span class="badge badge-status ${status.className}">${status.label}</span></td>
+                        <td>${emptyBadge}</td>
                     </tr>
                 `;
             }).join('');
@@ -1120,7 +1123,7 @@
             const partitions = (details.partitions || []).slice().sort((a, b) => a.partition - b.partition);
 
             if (partitions.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" class="loading">No partition details available.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" class="loading">No partition details available.</td></tr>';
                 return;
             }
 
@@ -1128,13 +1131,14 @@
             tbody.innerHTML = partitions.map(part => {
                 const ageDays = timestampToAgeDays(part.timestamp);
                 const status = getStatusByAge(ageDays, thresholds);
-                const emptyBadge = part.is_empty ? ' <span class="badge badge-status badge-empty">Empty</span>' : '';
+                const emptyBadge = part.is_empty ? '<span class="badge badge-status badge-empty">Empty</span>' : '-';
                 return `
                     <tr>
                         <td>${part.partition}</td>
                         <td>${part.offset}</td>
                         <td><code>${formatAge(part.timestamp)}</code></td>
-                        <td><span class="badge badge-status ${status.className}">${status.label}</span>${emptyBadge}</td>
+                        <td><span class="badge badge-status ${status.className}">${status.label}</span></td>
+                        <td>${emptyBadge}</td>
                     </tr>
                 `;
             }).join('');
@@ -1144,7 +1148,7 @@
             topicDetailsModal.show();
             document.getElementById('topicModalTitle').textContent = `Topic: ${topicName}`;
             document.getElementById('topicDetailsMeta').textContent = 'Loading topic details...';
-            document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="4" class="loading">Loading partition details...</td></tr>';
+            document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="5" class="loading">Loading partition details...</td></tr>';
 
             try {
                 const response = await fetch(`${API_BASE}/topics/${encodeURIComponent(topicName)}`);
@@ -1156,7 +1160,7 @@
             } catch (error) {
                 console.error('Error loading topic details:', error);
                 document.getElementById('topicDetailsMeta').textContent = 'Failed to load topic details.';
-                document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="4" class="loading">Unable to load partition details.</td></tr>';
+                document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="5" class="loading">Unable to load partition details.</td></tr>';
             }
         }
 

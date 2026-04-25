@@ -499,7 +499,7 @@ func parseSort(c *gin.Context) (sortBy, sortDir string) {
 	sortBy = c.DefaultQuery("sort_by", "name")
 	sortDir = c.DefaultQuery("sort_dir", "asc")
 
-	validSortBy := map[string]bool{"name": true, "partitions": true, "age": true, "status": true}
+	validSortBy := map[string]bool{"name": true, "partitions": true, "age": true, "status": true, "empty": true}
 	if !validSortBy[sortBy] {
 		sortBy = "name"
 	}
@@ -545,6 +545,15 @@ func (s *Server) sortTopicResponses(topics []topicResponse, sortBy, sortDir stri
 				statusOrder(topics[i], now, staleDays, unusedDays),
 				statusOrder(topics[j], now, staleDays, unusedDays),
 			)
+		case "empty":
+			emptyI, emptyJ := 0, 0
+			if topics[i].IsEmpty {
+				emptyI = 1
+			}
+			if topics[j].IsEmpty {
+				emptyJ = 1
+			}
+			c = cmp.Compare(emptyI, emptyJ)
 		default:
 			c = nameCmp
 		}
