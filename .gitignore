@@ -41,3 +41,4 @@ temp/
 *.tmp
 
 kafkactl
+docker-compose.yml

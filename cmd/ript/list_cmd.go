@@ -92,14 +92,16 @@ type listJSONItem struct {
 	OldestPartition   string          `json:"oldest_partition_age"`
 	NewestPartition   string          `json:"newest_partition_age"`
 	StalePartitions   int             `json:"stale_partitions"`
+	TotalMessageCount int64           `json:"total_message_count"`
 	LastUpdateUnix    int64           `json:"last_update_unix"`
 	StalePartitionSet []partitionJSON `json:"stale_partition_details,omitempty"`
 }
 
 type partitionJSON struct {
-	Partition int32  `json:"partition"`
-	Offset    int64  `json:"offset"`
-	Age       string `json:"age"`
+	Partition    int32  `json:"partition"`
+	Offset       int64  `json:"offset"`
+	Age          string `json:"age"`
+	MessageCount int64  `json:"message_count"`
 }
 
 func printListJSON(topics []*models.TopicStatus, opts *listOptions) error {
@@ -107,22 +109,24 @@ func printListJSON(topics []*models.TopicStatus, opts *listOptions) error {
 	for _, topic := range topics {
 		stalePartitions := collectStalePartitions(topic, opts.staleDays)
 		item := listJSONItem{
-			Name:            topic.Name,
-			Status:          classifyTopicStatus(topic, opts.staleDays, opts.unusedDays),
-			IsEmpty:         topic.IsEmpty,
-			PartitionCount:  topic.PartitionCount,
-			OldestPartition: topic.OldestPartitionAge.String(),
-			NewestPartition: topic.NewestPartitionAge.String(),
-			StalePartitions: len(stalePartitions),
-			LastUpdateUnix:  topic.LastUpdate,
+			Name:              topic.Name,
+			Status:            classifyTopicStatus(topic, opts.staleDays, opts.unusedDays),
+			IsEmpty:           topic.IsEmpty,
+			PartitionCount:    topic.PartitionCount,
+			OldestPartition:   topic.OldestPartitionAge.String(),
+			NewestPartition:   topic.NewestPartitionAge.String(),
+			StalePartitions:   len(stalePartitions),
+			TotalMessageCount: topic.TotalMessageCount,
+			LastUpdateUnix:    topic.LastUpdate,
 		}
 		if opts.includeStalePartitions {
 			item.StalePartitionSet = make([]partitionJSON, 0, len(stalePartitions))
 			for _, part := range stalePartitions {
 				item.StalePartitionSet = append(item.StalePartitionSet, partitionJSON{
-					Partition: part.Partition,
-					Offset:    part.Offset,
-					Age:       part.Age.String(),
+					Partition:    part.Partition,
+					Offset:       part.Offset,
+					Age:          part.Age.String(),
+					MessageCount: part.MessageCount,
 				})
 			}
 		}
@@ -146,19 +150,20 @@ func printListJSON(topics []*models.TopicStatus, opts *listOptions) error {
 
 func printListTable(topics []*models.TopicStatus, opts *listOptions) {
 	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "TOPIC\tSTATUS\tEMPTY\tPARTITIONS\tSTALE_PARTITIONS\tOLDEST_AGE\tNEWEST_AGE")
+	fmt.Fprintln(w, "TOPIC\tSTATUS\tEMPTY\tPARTITIONS\tSTALE_PARTITIONS\tMESSAGES\tOLDEST_AGE\tNEWEST_AGE")
 	for _, topic := range topics {
 		stalePartitions := collectStalePartitions(topic, opts.staleDays)
 		emptyVal := "no"
 		if topic.IsEmpty {
 			emptyVal = "yes"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
 			topic.Name,
 			classifyTopicStatus(topic, opts.staleDays, opts.unusedDays),
 			emptyVal,
 			topic.PartitionCount,
 			len(stalePartitions),
+			topic.TotalMessageCount,
 			topic.OldestPartitionAge.String(),
 			topic.NewestPartitionAge.String(),
 		)

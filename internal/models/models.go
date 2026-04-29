@@ -14,15 +14,17 @@ type TopicStatus struct {
 	NewestPartitionAge Duration                 `json:"newest_partition_age"`
 	LastUpdate         int64                    `json:"last_update"`
 	IsEmpty            bool                     `json:"is_empty"`
+	TotalMessageCount  int64                    `json:"total_message_count"`
 }
 
 type PartitionInfo struct {
-	Partition int32    `json:"partition"`
-	Offset    int64    `json:"offset"`
-	Timestamp int64    `json:"timestamp"`
-	Age       Duration `json:"age"`
-	IsEmpty   bool     `json:"is_empty"`
-	ScannedAt int64    `json:"scanned_at,omitempty"`
+	Partition    int32    `json:"partition"`
+	Offset       int64    `json:"offset"`
+	Timestamp    int64    `json:"timestamp"`
+	Age          Duration `json:"age"`
+	IsEmpty      bool     `json:"is_empty"`
+	ScannedAt    int64    `json:"scanned_at,omitempty"`
+	MessageCount int64    `json:"message_count"`
 }
 
 type ClusterSnapshot struct {

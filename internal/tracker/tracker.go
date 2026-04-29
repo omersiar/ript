@@ -429,6 +429,7 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 			if newestTimestamp == 0 || partInfo.Timestamp > newestTimestamp {
 				newestTimestamp = partInfo.Timestamp
 			}
+			topicStatus.TotalMessageCount += partInfo.MessageCount
 		}
 
 		if oldestTimestamp > 0 {
@@ -448,6 +449,7 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 			for partID, partInfo := range globalTopic.Partitions {
 				if _, owned := topicStatus.Partitions[partID]; !owned {
 					topicStatus.Partitions[partID] = partInfo
+					topicStatus.TotalMessageCount += partInfo.MessageCount
 				}
 			}
 		}
@@ -615,12 +617,13 @@ func buildTopicStatusFromStatePartitions(topicName string, ts int64, partitions 
 	for partID, part := range partitions {
 		age := models.CalculateDuration(time.Unix(part.Timestamp, 0).UTC())
 		topicStatus.Partitions[partID] = &models.PartitionInfo{
-			Partition: partID,
-			Offset:    part.Offset,
-			Timestamp: part.Timestamp,
-			Age:       age,
-			IsEmpty:   part.IsEmpty,
-			ScannedAt: part.ScannedAt,
+			Partition:    partID,
+			Offset:       part.Offset,
+			Timestamp:    part.Timestamp,
+			Age:          age,
+			IsEmpty:      part.IsEmpty,
+			ScannedAt:    part.ScannedAt,
+			MessageCount: part.MessageCount,
 		}
 		if oldestTimestamp == 0 || part.Timestamp < oldestTimestamp {
 			oldestTimestamp = part.Timestamp
@@ -628,6 +631,7 @@ func buildTopicStatusFromStatePartitions(topicName string, ts int64, partitions 
 		if newestTimestamp == 0 || part.Timestamp > newestTimestamp {
 			newestTimestamp = part.Timestamp
 		}
+		topicStatus.TotalMessageCount += part.MessageCount
 	}
 
 	topicStatus.PartitionCount = int32(len(partitions))
@@ -693,6 +697,7 @@ func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.Topi
 
 	merged.PartitionCount = int32(len(merged.Partitions))
 	var oldest, newest int64
+	var totalMessages int64
 	for _, part := range merged.Partitions {
 		if oldest == 0 || part.Timestamp < oldest {
 			oldest = part.Timestamp
@@ -700,7 +705,9 @@ func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.Topi
 		if newest == 0 || part.Timestamp > newest {
 			newest = part.Timestamp
 		}
+		totalMessages += part.MessageCount
 	}
+	merged.TotalMessageCount = totalMessages
 	if oldest > 0 {
 		merged.OldestPartitionAge = models.CalculateDuration(time.Unix(oldest, 0).UTC())
 	}
@@ -838,13 +845,19 @@ func buildPartitionInfo(partitionID int32, currentOffset int64, earliestOffset i
 	timestamp := resolvePartitionTimestamp(previous, currentOffset, now)
 	age := models.CalculateDuration(time.Unix(timestamp, 0).UTC())
 
+	messageCount := currentOffset - earliestOffset
+	if messageCount < 0 {
+		messageCount = 0
+	}
+
 	return &models.PartitionInfo{
-		Partition: partitionID,
-		Offset:    currentOffset,
-		Timestamp: timestamp,
-		Age:       age,
-		IsEmpty:   earliestOffset == currentOffset,
-		ScannedAt: now,
+		Partition:    partitionID,
+		Offset:       currentOffset,
+		Timestamp:    timestamp,
+		Age:          age,
+		IsEmpty:      earliestOffset == currentOffset,
+		ScannedAt:    now,
+		MessageCount: messageCount,
 	}
 }
 

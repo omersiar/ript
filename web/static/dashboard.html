@@ -525,13 +525,14 @@
                         <tr>
                             <th data-sort="name">Topic Name</th>
                             <th data-sort="partitions">Partitions</th>
+                            <th data-sort="messages">Messages</th>
                             <th data-sort="age">Oldest Partition Age</th>
                             <th data-sort="status">Status</th>
                             <th data-sort="empty">Empty</th>
                         </tr>
                     </thead>
                     <tbody id="topicsTableBody">
-                        <tr><td colspan="5" class="loading">Loading topics...</td></tr>
+                        <tr><td colspan="6" class="loading">Loading topics...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -604,13 +605,14 @@
                                 <tr>
                                     <th>Partition</th>
                                     <th>Offset</th>
+                                    <th>Messages</th>
                                     <th>Age</th>
                                     <th>Status</th>
                                     <th>Empty</th>
                                 </tr>
                             </thead>
                             <tbody id="topicDetailsTableBody">
-                                <tr><td colspan="5" class="loading">Select a topic to view partition details.</td></tr>
+                                <tr><td colspan="6" class="loading">Select a topic to view partition details.</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -1083,7 +1085,7 @@
             const topicsTable = document.getElementById('topicsTable');
 
             if (!topics || topics.length === 0) {
-                body.innerHTML = '<tr><td colspan="5" class="loading">No results.</td></tr>';
+                body.innerHTML = '<tr><td colspan="6" class="loading">No results.</td></tr>';
                 emptyState.style.display = 'block';
                 topicsTable.style.display = 'none';
                 return;
@@ -1103,6 +1105,7 @@
                     <tr>
                         <td><span class="topic-link" data-topic-name="${escapeHtml(topic.name)}">${escapeHtml(topic.name)}</span></td>
                         <td>${topic.partition_count}</td>
+                        <td>${(topic.total_message_count || 0).toLocaleString()}</td>
                         <td><code>${formatAge(topic.oldest_partition_timestamp)}</code></td>
                         <td><span class="badge badge-status ${status.className}">${status.label}</span></td>
                         <td>${emptyBadge}</td>
@@ -1123,7 +1126,7 @@
             const partitions = (details.partitions || []).slice().sort((a, b) => a.partition - b.partition);
 
             if (partitions.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" class="loading">No partition details available.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" class="loading">No partition details available.</td></tr>';
                 return;
             }
 
@@ -1136,6 +1139,7 @@
                     <tr>
                         <td>${part.partition}</td>
                         <td>${part.offset}</td>
+                        <td>${(part.message_count || 0).toLocaleString()}</td>
                         <td><code>${formatAge(part.timestamp)}</code></td>
                         <td><span class="badge badge-status ${status.className}">${status.label}</span></td>
                         <td>${emptyBadge}</td>
@@ -1148,7 +1152,7 @@
             topicDetailsModal.show();
             document.getElementById('topicModalTitle').textContent = `Topic: ${topicName}`;
             document.getElementById('topicDetailsMeta').textContent = 'Loading topic details...';
-            document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="5" class="loading">Loading partition details...</td></tr>';
+document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6" class="loading">Loading partition details...</td></tr>';
 
             try {
                 const response = await fetch(`${API_BASE}/topics/${encodeURIComponent(topicName)}`);
@@ -1160,7 +1164,7 @@
             } catch (error) {
                 console.error('Error loading topic details:', error);
                 document.getElementById('topicDetailsMeta').textContent = 'Failed to load topic details.';
-                document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="5" class="loading">Unable to load partition details.</td></tr>';
+                document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6" class="loading">Unable to load partition details.</td></tr>';
             }
         }
 

@@ -45,6 +45,7 @@ type topicResponse struct {
 	OldestPartitionTimestamp int64  `json:"oldest_partition_timestamp"`
 	NewestPartitionTimestamp int64  `json:"newest_partition_timestamp"`
 	IsEmpty                  bool   `json:"is_empty"`
+	TotalMessageCount        int64  `json:"total_message_count"`
 }
 
 type thresholdValues struct {
@@ -169,20 +170,22 @@ func (s *Server) handleGetTopic(c *gin.Context) {
 	}
 
 	type PartitionResponse struct {
-		Partition int32 `json:"partition"`
-		Offset    int64 `json:"offset"`
-		Timestamp int64 `json:"timestamp"`
-		IsEmpty   bool  `json:"is_empty"`
+		Partition    int32 `json:"partition"`
+		Offset       int64 `json:"offset"`
+		Timestamp    int64 `json:"timestamp"`
+		IsEmpty      bool  `json:"is_empty"`
+		MessageCount int64 `json:"message_count"`
 	}
 
 	var partitions []PartitionResponse
 	var oldestTS, newestTS int64
 	for _, part := range topic.Partitions {
 		partitions = append(partitions, PartitionResponse{
-			Partition: part.Partition,
-			Offset:    part.Offset,
-			Timestamp: part.Timestamp,
-			IsEmpty:   part.IsEmpty,
+			Partition:    part.Partition,
+			Offset:       part.Offset,
+			Timestamp:    part.Timestamp,
+			IsEmpty:      part.IsEmpty,
+			MessageCount: part.MessageCount,
 		})
 		if oldestTS == 0 || part.Timestamp < oldestTS {
 			oldestTS = part.Timestamp
@@ -467,6 +470,7 @@ func buildTopicResponse(topic *models.TopicStatus) topicResponse {
 		OldestPartitionTimestamp: oldestTS,
 		NewestPartitionTimestamp: newestTS,
 		IsEmpty:                  topic.IsEmpty,
+		TotalMessageCount:        topic.TotalMessageCount,
 	}
 }
 
@@ -499,7 +503,7 @@ func parseSort(c *gin.Context) (sortBy, sortDir string) {
 	sortBy = c.DefaultQuery("sort_by", "name")
 	sortDir = c.DefaultQuery("sort_dir", "asc")
 
-	validSortBy := map[string]bool{"name": true, "partitions": true, "age": true, "status": true, "empty": true}
+	validSortBy := map[string]bool{"name": true, "partitions": true, "age": true, "status": true, "empty": true, "messages": true}
 	if !validSortBy[sortBy] {
 		sortBy = "name"
 	}
@@ -554,6 +558,8 @@ func (s *Server) sortTopicResponses(topics []topicResponse, sortBy, sortDir stri
 				emptyJ = 1
 			}
 			c = cmp.Compare(emptyI, emptyJ)
+		case "messages":
+			c = cmp.Compare(topics[i].TotalMessageCount, topics[j].TotalMessageCount)
 		default:
 			c = nameCmp
 		}
