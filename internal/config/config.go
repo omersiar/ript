@@ -19,8 +19,8 @@ type Config struct {
 	TrackerGroupSessionTimeoutMS   int
 	TrackerGroupHeartbeatMS        int
 	TrackerGroupRebalanceTimeoutMS int
-	TrackerTopicPartitions         int
-	TrackerTopicReplicationFactor  int
+	TrackerTopicPartitions         int32
+	TrackerTopicReplicationFactor  int16
 	TrackerTopicSegmentMS          int
 	TrackerTopicMinCleanableRatio  float64
 	StateLoadTimeoutSeconds        int
@@ -70,8 +70,8 @@ func Load() (*Config, error) {
 		TrackerGroupSessionTimeoutMS:   getInt("RIPT_KAFKA_CONSUMER_SESSION_TIMEOUT_MS", 30000),
 		TrackerGroupHeartbeatMS:        getInt("RIPT_KAFKA_CONSUMER_HEARTBEAT_MS", 3000),
 		TrackerGroupRebalanceTimeoutMS: getInt("RIPT_KAFKA_CONSUMER_REBALANCE_TIMEOUT_MS", 45000),
-		TrackerTopicPartitions:         getInt("RIPT_STATE_TOPIC_PARTITIONS", 6),
-		TrackerTopicReplicationFactor:  getInt("RIPT_STATE_TOPIC_REPLICATION_FACTOR", 1),
+		TrackerTopicPartitions:         getInt32("RIPT_STATE_TOPIC_PARTITIONS", 6),
+		TrackerTopicReplicationFactor:  getInt16("RIPT_STATE_TOPIC_REPLICATION_FACTOR", 1),
 		TrackerTopicSegmentMS:          getInt("RIPT_STATE_TOPIC_SEGMENT_MS", 86400000),
 		TrackerTopicMinCleanableRatio:  getFloat("RIPT_STATE_TOPIC_MIN_CLEANABLE_DIRTY_RATIO", 0.1),
 		StateLoadTimeoutSeconds:        getInt("RIPT_STATE_LOAD_TIMEOUT_SECONDS", 30),
@@ -219,6 +219,24 @@ func getInt(key string, defaultVal int) int {
 	if val, exists := os.LookupEnv(key); exists {
 		if intVal, err := strconv.Atoi(val); err == nil {
 			return intVal
+		}
+	}
+	return defaultVal
+}
+
+func getInt32(key string, defaultVal int32) int32 {
+	if val, exists := os.LookupEnv(key); exists {
+		if intVal, err := strconv.ParseInt(val, 10, 32); err == nil {
+			return int32(intVal)
+		}
+	}
+	return defaultVal
+}
+
+func getInt16(key string, defaultVal int16) int16 {
+	if val, exists := os.LookupEnv(key); exists {
+		if intVal, err := strconv.ParseInt(val, 10, 16); err == nil {
+			return int16(intVal)
 		}
 	}
 	return defaultVal

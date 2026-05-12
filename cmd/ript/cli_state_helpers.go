@@ -42,8 +42,8 @@ func newCLIRuntime(clientRoleSuffix string) (*cliRuntime, error) {
 	stateManager := kafka.NewStateManager(
 		client,
 		cfg.TrackerTopic,
-		int32(cfg.TrackerTopicPartitions),
-		int16(cfg.TrackerTopicReplicationFactor),
+		cfg.TrackerTopicPartitions,
+		cfg.TrackerTopicReplicationFactor,
 		cfg.TrackerTopicSegmentMS,
 		cfg.TrackerTopicMinCleanableRatio,
 		time.Duration(cfg.StateLoadTimeoutSeconds)*time.Second,
