@@ -9,6 +9,8 @@ import (
 	"github.com/joho/godotenv"
 )
 
+const sensitiveValueLabel = "[sensitive]"
+
 type Config struct {
 	KafkaBrokers                   []string
 	ScanIntervalMinutes            int
@@ -180,12 +182,22 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) String() string {
-	return fmt.Sprintf("Config{Brokers: %v, ScanInterval: %dm, StateTopic: %s, ConsumerGroupID: %s, GroupSessionTimeoutMS: %d, GroupHeartbeatMS: %d, GroupRebalanceTimeoutMS: %d, Partitions: %d, RF: %d, SegmentMS: %d, MinCleanableRatio: %g, StateLoadTimeout: %ds, InstanceID: %s, HTTPPort: %d, StaticFilesDir: %s, LogLevel: %s, StaleDays: %d, UnusedDays: %d, HeartbeatInterval: %ds, ConnectRetry: %ds}",
+	return fmt.Sprintf("Config{Brokers: %v, ScanInterval: %dm, StateTopic: %s, ConsumerGroupID: %s, GroupSessionTimeoutMS: %d, GroupHeartbeatMS: %d, GroupRebalanceTimeoutMS: %d, Partitions: %d, RF: %d, SegmentMS: %d, MinCleanableRatio: %g, StateLoadTimeout: %ds, InstanceID: %s, HTTPHost: %s, HTTPPort: %d, StaticFilesDir: %s, LogLevel: %s, StaleDays: %d, UnusedDays: %d, HeartbeatInterval: %ds, ConnectRetry: %ds, KafkaSecurityProtocol: %s, KafkaSASLMechanism: %s, KafkaSASLUsername: %s, KafkaSASLPassword: %s, KafkaSASLOAuthTokenEndpoint: %s, KafkaSASLOAuthClientID: %s, KafkaSASLOAuthClientSecret: %s, KafkaSASLOAuthScope: %s, KafkaTLSCACertFile: %s, KafkaTLSClientCertFile: %s, KafkaTLSClientKeyFile: %s, KafkaTLSInsecureSkip: %t}",
 		c.KafkaBrokers, c.ScanIntervalMinutes, c.TrackerTopic,
 		c.TrackerConsumerGroupID, c.TrackerGroupSessionTimeoutMS, c.TrackerGroupHeartbeatMS, c.TrackerGroupRebalanceTimeoutMS,
 		c.TrackerTopicPartitions, c.TrackerTopicReplicationFactor, c.TrackerTopicSegmentMS, c.TrackerTopicMinCleanableRatio, c.StateLoadTimeoutSeconds,
-		c.InstanceID, c.HTTPPort, c.StaticFilesDir, c.LogLevel, c.StalePartitionDays, c.UnusedTopicDays,
-		c.InstanceHeartbeatIntervalSeconds, c.KafkaConnectRetrySeconds)
+		c.InstanceID, c.HTTPHost, c.HTTPPort, c.StaticFilesDir, c.LogLevel, c.StalePartitionDays, c.UnusedTopicDays,
+		c.InstanceHeartbeatIntervalSeconds, c.KafkaConnectRetrySeconds, c.KafkaSecurityProtocol, c.KafkaSASLMechanism,
+		c.KafkaSASLUsername, redactSensitive(c.KafkaSASLPassword), c.KafkaSASLOAuthTokenEndpoint,
+		c.KafkaSASLOAuthClientID, redactSensitive(c.KafkaSASLOAuthClientSecret), c.KafkaSASLOAuthScope,
+		c.KafkaTLSCACertFile, c.KafkaTLSClientCertFile, redactSensitive(c.KafkaTLSClientKeyFile), c.KafkaTLSInsecureSkip)
+}
+
+func redactSensitive(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return sensitiveValueLabel
 }
 
 func defaultInstanceID() string {
