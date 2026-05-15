@@ -1,9 +1,9 @@
-### Kafka ACLs (secured clusters)
+### Kafka ACLs
 
 If your Kafka cluster enforce ACLs, grant the RIPT principal permissions for:
 
 - Fetching offsets for the topics that RIPT track (reading messages not needed)
-- Read/write access to the RIPT's internal state topic
+- Read/write access to the RIPT's internal state topic (`RIPT_STATE_TOPIC`)
 - Consumer group access for scan workload balancing (`RIPT_KAFKA_CONSUMER_GROUP_ID`)
 
 Example (`User:ript`, Kafka ACL authorizer):
@@ -11,12 +11,12 @@ Example (`User:ript`, Kafka ACL authorizer):
 Adjust principal format as needed for your environment (for example, mTLS DNs or SASL usernames).
 
 ```bash
-# 1) Cluster metadata
+# 1) Cluster metadata - Optional / Not needed
 kafka-acls.sh --bootstrap-server localhost:9092 \
    --add --allow-principal User:ript \
    --operation Describe --cluster
 
-# 2) Read monitored topics (use --topic '*' for all topics, or scope to prefixes)
+# 2) Need only to describe topics (use --topic '*' for all topics, or scope to prefixes)
 kafka-acls.sh --bootstrap-server localhost:9092 \
    --add --allow-principal User:ript \
    --operation Describe \
@@ -28,7 +28,7 @@ kafka-acls.sh --bootstrap-server localhost:9092 \
    --operation All  \
    --topic ript-state
 
-# 4) Consumer group access used for balancing scans
+# 4) Consumer group access used for sharding
 kafka-acls.sh --bootstrap-server localhost:9092 \
    --add --allow-principal User:ript \
    --operation All \

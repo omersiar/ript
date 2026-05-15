@@ -178,6 +178,10 @@ func (t *TopicTracker) Stop() {
 func (t *TopicTracker) scanLoop(ctx context.Context) {
 	defer t.wg.Done()
 
+	// Run one scan immediately on startup so the first view is populated
+	// without waiting for the first ticker interval.
+	t.runScanCycle(ctx)
+
 	ticker := time.NewTicker(t.scanInterval)
 	defer ticker.Stop()
 
@@ -186,21 +190,25 @@ func (t *TopicTracker) scanLoop(ctx context.Context) {
 		case <-t.stopChan:
 			return
 		case <-ticker.C:
-			if !t.scanMu.TryLock() {
-				logging.Warn("Skipping scan cycle: previous scan still in progress")
-				continue
-			}
-			if err := t.prepareForScan(ctx); err != nil {
-				t.scanMu.Unlock()
-				logging.Warn("Skipping scan cycle: %v", err)
-				continue
-			}
-			err := t.scanTopics(ctx)
-			t.scanMu.Unlock()
-			if err != nil {
-				logging.Error("Error during scan: %v", err)
-			}
+			t.runScanCycle(ctx)
 		}
+	}
+}
+
+func (t *TopicTracker) runScanCycle(ctx context.Context) {
+	if !t.scanMu.TryLock() {
+		logging.Warn("Skipping scan cycle: previous scan still in progress")
+		return
+	}
+	if err := t.prepareForScan(ctx); err != nil {
+		t.scanMu.Unlock()
+		logging.Warn("Skipping scan cycle: %v", err)
+		return
+	}
+	err := t.scanTopics(ctx)
+	t.scanMu.Unlock()
+	if err != nil {
+		logging.Error("Error during scan: %v", err)
 	}
 }
 

@@ -78,7 +78,7 @@ func Load() (*Config, error) {
 		InstanceID:                     getString("RIPT_INSTANCE_ID", defaultInstanceID()),
 		HTTPPort:                       getInt("RIPT_HTTP_PORT", 8080),
 		HTTPHost:                       getString("RIPT_HTTP_HOST", "0.0.0.0"),
-		StaticFilesDir:                 getString("RIPT_STATIC_FILES_DIR", "./web/static"),
+		StaticFilesDir:                 getString("RIPT_HTTP_STATIC_FILES_DIR", "./web/static"),
 		LogLevel:                       getString("RIPT_LOG_LEVEL", "info"),
 
 		StalePartitionDays:               getInt("RIPT_STALE_PARTITION_DAYS", 7),
@@ -155,7 +155,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("RIPT_HTTP_PORT must be between 1 and 65535")
 	}
 	if strings.TrimSpace(c.StaticFilesDir) == "" {
-		return fmt.Errorf("RIPT_STATIC_FILES_DIR cannot be empty")
+		return fmt.Errorf("RIPT_HTTP_STATIC_FILES_DIR cannot be empty")
 	}
 	if c.StalePartitionDays < 1 {
 		return fmt.Errorf("RIPT_STALE_PARTITION_DAYS must be at least 1")
