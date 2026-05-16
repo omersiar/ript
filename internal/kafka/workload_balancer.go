@@ -3,7 +3,6 @@ package kafka
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"slices"
 	"strings"
 	"sync"
@@ -323,8 +322,8 @@ func (b *WorkloadBalancer) WaitForAssignments(ctx context.Context, timeout time.
 	}
 }
 
-func (b *WorkloadBalancer) OwnsTopicPartition(topic string, partition int32) bool {
-	shard := workloadShard(topic, partition, b.trackerPartitions)
+func (b *WorkloadBalancer) OwnsTopic(topic string) bool {
+	shard := topicShard(topic, b.trackerPartitions)
 	b.mu.RLock()
 	_, ok := b.assignedShards[shard]
 	b.mu.RUnlock()
@@ -341,15 +340,54 @@ func (b *WorkloadBalancer) GroupID() string {
 	return b.consumerGroupID
 }
 
-func workloadShard(topic string, partition int32, shardCount int32) int32 {
+// topicShard returns the state-topic partition index that owns records for the
+// given monitored topic. It uses Kafka's default Murmur2 partitioner algorithm
+// so the result matches the partition that the StateManager's kgo producer
+// selects when it writes a record with Key = []byte(topicName).
+func topicShard(topic string, shardCount int32) int32 {
 	if shardCount <= 1 {
 		return 0
 	}
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(topic))
-	_, _ = h.Write([]byte("#"))
-	_, _ = h.Write([]byte(fmt.Sprintf("%d", partition)))
-	return int32(h.Sum32() % uint32(shardCount))
+	h := kafkaMurmur2([]byte(topic))
+	return int32((int64(h) & 0x7FFFFFFF) % int64(shardCount))
+}
+
+// kafkaMurmur2 is the Murmur2 hash used by Kafka's default key partitioner
+// (matches the Java implementation in org.apache.kafka.common.utils.Utils).
+func kafkaMurmur2(data []byte) int32 {
+	const (
+		seed uint32 = 0x9747b28c
+		m    uint32 = 0x5bd1e995
+		r           = 24
+	)
+	h := seed ^ uint32(len(data))
+	for i := 0; i+4 <= len(data); i += 4 {
+		k := uint32(data[i]) |
+			uint32(data[i+1])<<8 |
+			uint32(data[i+2])<<16 |
+			uint32(data[i+3])<<24
+		k *= m
+		k ^= k >> r
+		k *= m
+		h *= m
+		h ^= k
+	}
+	tail := len(data) &^ 3
+	switch len(data) % 4 {
+	case 3:
+		h ^= uint32(data[tail+2]) << 16
+		fallthrough
+	case 2:
+		h ^= uint32(data[tail+1]) << 8
+		fallthrough
+	case 1:
+		h ^= uint32(data[tail])
+		h *= m
+	}
+	h ^= h >> 13
+	h *= m
+	h ^= h >> 15
+	return int32(h)
 }
 
 func sanitizeClientIDSegment(raw string) string {

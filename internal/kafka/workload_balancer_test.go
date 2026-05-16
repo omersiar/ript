@@ -6,42 +6,82 @@ import (
 	"time"
 )
 
-func TestWorkloadShardUsesPartitionInHash(t *testing.T) {
+func TestTopicShardDeterminismAndRange(t *testing.T) {
 	const shardCount int32 = 6
-	seen := make(map[int32]struct{})
 
-	for partition := int32(0); partition < 32; partition++ {
-		seen[workloadShard("orders", partition, shardCount)] = struct{}{}
+	// Determinism: same topic always maps to the same shard.
+	for _, topic := range []string{"orders", "payments", "user-events", "metrics", "__consumer_offsets"} {
+		s1 := topicShard(topic, shardCount)
+		s2 := topicShard(topic, shardCount)
+		if s1 != s2 {
+			t.Fatalf("topicShard(%q) not deterministic: %d != %d", topic, s1, s2)
+		}
+		if s1 < 0 || s1 >= shardCount {
+			t.Fatalf("topicShard(%q) = %d out of range [0, %d)", topic, s1, shardCount)
+		}
 	}
 
+	// Distribution: a set of topics should spread across more than one shard.
+	topics := []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"}
+	seen := make(map[int32]struct{})
+	for _, topic := range topics {
+		seen[topicShard(topic, shardCount)] = struct{}{}
+	}
 	if len(seen) <= 1 {
-		t.Fatalf("expected same topic to spread across multiple shards, got %d", len(seen))
+		t.Fatalf("expected topics to spread across multiple shards, all landed on %v", seen)
 	}
 }
 
-func TestOwnsTopicPartitionCanSplitSameTopicAcrossAssignments(t *testing.T) {
+func TestTopicShardSinglePartitionAlwaysZero(t *testing.T) {
+	for _, topic := range []string{"orders", "payments", "anything"} {
+		if got := topicShard(topic, 1); got != 0 {
+			t.Fatalf("topicShard(%q, 1) = %d, want 0", topic, got)
+		}
+	}
+}
+
+// TestTopicShardMatchesKafkaMurmur2 verifies a known reference value computed
+// against Kafka's Java murmur2 implementation. "test-topic" with 6 partitions
+// should map to partition 1 (murmur2 = 0xA1B6651B; (0xA1B6651B & 0x7FFFFFFF) % 6 = 1).
+// This matches the Java reference: org.apache.kafka.common.utils.Utils.murmur2.
+func TestTopicShardMatchesKafkaMurmur2(t *testing.T) {
+	const topic = "test-topic"
+	const shardCount int32 = 6
+	const wantShard int32 = 1 // (0xA1B6651B & 0x7FFFFFFF) % 6 = 1
+	if got := topicShard(topic, shardCount); got != wantShard {
+		t.Fatalf("topicShard(%q, %d) = %d, want %d (Kafka Murmur2 reference)", topic, shardCount, got, wantShard)
+	}
+}
+
+func TestOwnsTopicOwnsAllPartitions(t *testing.T) {
+	const shardCount int32 = 6
+	// Find a topic whose shard we can control.
+	// "orders" hashes to shard topicShard("orders", 6).
+	ownedShard := topicShard("orders", shardCount)
+
 	b := &WorkloadBalancer{
 		consumerGroupID:   "group-a",
-		trackerPartitions: 6,
-		assignedShards:    map[int32]struct{}{2: {}},
+		trackerPartitions: shardCount,
+		assignedShards:    map[int32]struct{}{ownedShard: {}},
 	}
 
-	var ownedPartition int32 = -1
-	var unownedPartition int32 = -1
+	if !b.OwnsTopic("orders") {
+		t.Fatal("expected OwnsTopic(\"orders\") = true for the assigned shard")
+	}
 
-	for partition := int32(0); partition < 128; partition++ {
-		if b.OwnsTopicPartition("orders", partition) {
-			ownedPartition = partition
-		} else {
-			unownedPartition = partition
-		}
-		if ownedPartition >= 0 && unownedPartition >= 0 {
+	// A topic that hashes to a different shard should not be owned.
+	var unownedTopic string
+	for _, candidate := range []string{"payments", "user-events", "metrics", "logs", "alerts"} {
+		if topicShard(candidate, shardCount) != ownedShard {
+			unownedTopic = candidate
 			break
 		}
 	}
-
-	if ownedPartition < 0 || unownedPartition < 0 {
-		t.Fatal("expected to find both owned and unowned partitions for same topic")
+	if unownedTopic == "" {
+		t.Skip("all candidate topics happen to share the same shard — adjust candidates")
+	}
+	if b.OwnsTopic(unownedTopic) {
+		t.Fatalf("expected OwnsTopic(%q) = false (shard %d not assigned)", unownedTopic, topicShard(unownedTopic, shardCount))
 	}
 }
 

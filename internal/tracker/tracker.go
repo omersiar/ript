@@ -328,20 +328,18 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 	processedTopics := 0
 	processedPartitions := 0
 
-	// Apply ownership filter: only track partitions assigned to this instance.
+	// Apply ownership filter: only track topics assigned to this instance.
+	// Ownership is per topic (not per partition) — the same partition that the
+	// StateManager writes the topic's state record to determines ownership, using
+	// Kafka's standard Murmur2 hash of the topic name. All physical partitions of
+	// an owned topic are scanned by this instance; none are split across instances.
 	ownedTopicPartitions := make(map[string][]int32, len(allTopics))
 	for topicName, partitions := range allTopics {
-		owned := make([]int32, 0, len(partitions))
-		for _, partID := range partitions {
-			if t.workloadBalancer == nil || t.workloadBalancer.OwnsTopicPartition(topicName, partID) {
-				owned = append(owned, partID)
-			}
-		}
-		if len(owned) == 0 {
+		if t.workloadBalancer != nil && !t.workloadBalancer.OwnsTopic(topicName) {
 			continue
 		}
 		assignedTopics++
-		ownedTopicPartitions[topicName] = owned
+		ownedTopicPartitions[topicName] = partitions
 	}
 
 	// During transient rebalance/loss windows (for example after host sleep),

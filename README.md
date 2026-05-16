@@ -12,20 +12,25 @@ RIPT is a stateless Go tool that monitors Kafka topics and flags the ones no one
 
 In 2022 LinkedIn engineers shared a [blog post](https://www.linkedin.com/blog/engineering/infrastructure/topicgc_how-linkedin-cleans-up-unused-metadata-for-its-kafka-clu), reducing the number of topics by 20%, request latencies dropped by up to 40% and CPU usage had seen 30% drop, this is simply because every partition still has its metadata stored and served.
 
-RIPT needs only one signal — how long since a topic or partition was last updated. No metrics pipelines, no JMX, no broker-side setup.
+RIPT needs only one signal — how long since a topic or partition was last updated. No metrics pipelines or JMX configuration is needed, no broker-side setup required. You only need to run it for some time, for example a week in order to see which Kafka Topics did not recieve any data for the past 7 days.
 
 #### Features:
 
+* Supports almost every Apache Kafka version
+* Supports almost every Apache Kafka authentication / authorization mechanism
+* Supports managed Kafka services
 * Stateless - no external dependencies
 * Portable - it works regardless of observability setup
 * Low footprint - extremely careful about the requests it makes, safe to run on already-busy clusters
 * Scalable - Automatic, zero-conf sharding, just run more instances of the RIPT
-* It can be run as a long-running daemon or as CLI, can also run as a cron job
+* It can run as a long-running daemon or as single shot CLI tool, this helps running it as a cron job
 * You don't need to run it all the time, a daily run would also be useful
 * It can report empty topics
 * It can report stalled partitions, this happens when a Kafka producer is not partitioning messages as expected to all partitions.
 
 #### Get started:
+
+see [quickstart](QUICKSTART.md) for more configuration options like authz / ACLs
 
 #### Docker / Podman 
 Container images can be downloaded from [ghcr.io](https://github.com/omersiar/ript/pkgs/container/ript)
@@ -53,7 +58,6 @@ docker compose up
 ```
 
 #### Binary from GitHub [releases](https://github.com/omersiar/ript/releases)
-
 
 To run it either create an .env file:
 
@@ -91,8 +95,6 @@ export RIPT_STATE_TOPIC=ript-state-topic
 export RIPT_SCAN_INTERVAL_MINUTES=5
 ./bin/ript
 ```
-
-For more see [quickstart](QUICKSTART.md).
 
 [![RIPT](ript.png)](https://github.com/omersiar/ript)
 
