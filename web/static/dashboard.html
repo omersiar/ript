@@ -795,6 +795,26 @@
             return { label: 'Active', className: 'badge-active' };
         }
 
+        function topicHasEmptyPartitions(topic) {
+            if (!topic || typeof topic !== 'object') {
+                return false;
+            }
+
+            if (topic.has_empty_partitions === true) {
+                return true;
+            }
+
+            if (topic.is_empty === true) {
+                return true;
+            }
+
+            if (Array.isArray(topic.partitions)) {
+                return topic.partitions.some(partition => partition && partition.is_empty === true);
+            }
+
+            return false;
+        }
+
         function loadSettingsIntoUI() {
             localStorage.removeItem('ript.filterThreshold');
 
@@ -974,7 +994,8 @@
             return `${API_BASE}/${endpoint}?${params.toString()}`;
         }
 
-        async function loadTopics() {
+        async function loadTopics(options = {}) {
+            const allowPageRecovery = options.allowPageRecovery !== false;
             if (isLoadingTopics) {
                 return;
             }
@@ -1000,8 +1021,21 @@
                 const data = await response.json();
 
                 const topics = data.topics || data.empty_topics || [];
+                const normalizedTotal = Number.isInteger(data.total) && data.total >= 0 ? data.total : topics.length;
+                const totalPages = Math.max(1, Math.ceil(normalizedTotal / pageSize));
+
+                // If data changed while user was on a now-invalid page, recover by
+                // reloading once using the clamped last valid page.
+                if (allowPageRecovery && normalizedTotal > 0 && currentPage > totalPages) {
+                    currentPage = totalPages;
+                    isLoadingTopics = false;
+                    setRefreshLoading(false);
+                    await loadTopics({ allowPageRecovery: false });
+                    return;
+                }
+
                 latestTopics = topics;
-                totalItems = data.total ?? topics.length;
+                totalItems = normalizedTotal;
                 hasMore = Boolean(data.has_more);
 
                 renderTopics(topics);
@@ -1016,15 +1050,22 @@
         }
 
         function updatePaginationUI(currentCount) {
-            const start = totalItems === 0 ? 0 : ((currentPage - 1) * pageSize) + 1;
-            const end = totalItems === 0 ? 0 : Math.min((currentPage - 1) * pageSize + currentCount, totalItems);
             const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+            const effectivePage = Math.min(Math.max(currentPage, 1), totalPages);
+            currentPage = effectivePage;
+
+            let start = 0;
+            let end = 0;
+            if (totalItems > 0) {
+                start = ((effectivePage - 1) * pageSize) + 1;
+                end = Math.min(((effectivePage - 1) * pageSize) + currentCount, totalItems);
+            }
 
             document.getElementById('paginationSummary').textContent = `${start}-${end} of ${totalItems}`;
-            document.getElementById('firstPageBtn').disabled = currentPage <= 1;
-            document.getElementById('prevPageBtn').disabled = currentPage <= 1;
-            document.getElementById('nextPageBtn').disabled = !hasMore;
-            document.getElementById('lastPageBtn').disabled = !hasMore;
+            document.getElementById('firstPageBtn').disabled = effectivePage <= 1;
+            document.getElementById('prevPageBtn').disabled = effectivePage <= 1;
+            document.getElementById('nextPageBtn').disabled = effectivePage >= totalPages;
+            document.getElementById('lastPageBtn').disabled = effectivePage >= totalPages;
 
             const container = document.getElementById('pageNumbers');
             const pageInputContainer = document.getElementById('pageInput');
@@ -1038,7 +1079,7 @@
                 pageInputContainer.style.display = 'none';
             } else {
                 const half = Math.floor(maxVisible / 2);
-                startPage = Math.max(1, currentPage - half);
+                startPage = Math.max(1, effectivePage - half);
                 endPage = startPage + maxVisible - 1;
                 if (endPage > totalPages) {
                     endPage = totalPages;
@@ -1052,7 +1093,7 @@
                     const opt = document.createElement('option');
                     opt.value = p;
                     opt.textContent = p;
-                    if (p === currentPage) opt.selected = true;
+                    if (p === effectivePage) opt.selected = true;
                     pageField.appendChild(opt);
                 }
                 document.getElementById('pageInputTotal').textContent = `of ${totalPages}`;
@@ -1060,7 +1101,7 @@
 
             for (let p = startPage; p <= endPage; p++) {
                 const btn = document.createElement('button');
-                btn.className = p === currentPage ? 'btn btn-sm btn-dark' : 'btn btn-sm btn-outline-dark';
+                btn.className = p === effectivePage ? 'btn btn-sm btn-dark' : 'btn btn-sm btn-outline-dark';
                 btn.textContent = p;
                 btn.addEventListener('click', async () => {
                     currentPage = p;
@@ -1099,7 +1140,9 @@
 
             body.innerHTML = topics.map(topic => {
                 const status = getTopicStatus(topic.oldest_partition_timestamp, topic.newest_partition_timestamp, thresholds);
-                const emptyBadge = topic.is_empty ? '<span class="badge badge-status badge-empty">Empty</span>' : '-';
+                const emptyBadge = topicHasEmptyPartitions(topic)
+                    ? '<span class="badge badge-status badge-empty">Has Empty</span>'
+                    : '-';
 
                 return `
                     <tr>
@@ -1211,7 +1254,8 @@ document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6
         });
 
         document.getElementById('nextPageBtn').addEventListener('click', async () => {
-            if (!hasMore) {
+            const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+            if (currentPage >= totalPages) {
                 return;
             }
             currentPage += 1;
@@ -1219,8 +1263,8 @@ document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6
         });
 
         document.getElementById('lastPageBtn').addEventListener('click', async () => {
-            if (!hasMore) return;
             const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+            if (currentPage >= totalPages) return;
             currentPage = totalPages;
             await loadTopics();
         });

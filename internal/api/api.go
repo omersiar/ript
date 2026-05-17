@@ -44,6 +44,7 @@ type topicResponse struct {
 	PartitionCount           int32  `json:"partition_count"`
 	OldestPartitionTimestamp int64  `json:"oldest_partition_timestamp"`
 	NewestPartitionTimestamp int64  `json:"newest_partition_timestamp"`
+	HasEmptyPartitions       bool   `json:"has_empty_partitions"`
 	IsEmpty                  bool   `json:"is_empty"`
 	TotalMessageCount        int64  `json:"total_message_count"`
 }
@@ -456,6 +457,7 @@ func (s *Server) parseThresholds(c *gin.Context) (thresholdValues, error) {
 
 func buildTopicResponse(topic *models.TopicStatus) topicResponse {
 	var oldestTS, newestTS int64
+	hasEmptyPartitions := false
 	for _, part := range topic.Partitions {
 		if oldestTS == 0 || part.Timestamp < oldestTS {
 			oldestTS = part.Timestamp
@@ -463,12 +465,16 @@ func buildTopicResponse(topic *models.TopicStatus) topicResponse {
 		if newestTS == 0 || part.Timestamp > newestTS {
 			newestTS = part.Timestamp
 		}
+		if part.IsEmpty {
+			hasEmptyPartitions = true
+		}
 	}
 	return topicResponse{
 		Name:                     topic.Name,
 		PartitionCount:           topic.PartitionCount,
 		OldestPartitionTimestamp: oldestTS,
 		NewestPartitionTimestamp: newestTS,
+		HasEmptyPartitions:       hasEmptyPartitions,
 		IsEmpty:                  topic.IsEmpty,
 		TotalMessageCount:        topic.TotalMessageCount,
 	}
@@ -551,10 +557,10 @@ func (s *Server) sortTopicResponses(topics []topicResponse, sortBy, sortDir stri
 			)
 		case "empty":
 			emptyI, emptyJ := 0, 0
-			if topics[i].IsEmpty {
+			if topics[i].HasEmptyPartitions {
 				emptyI = 1
 			}
-			if topics[j].IsEmpty {
+			if topics[j].HasEmptyPartitions {
 				emptyJ = 1
 			}
 			c = cmp.Compare(emptyI, emptyJ)

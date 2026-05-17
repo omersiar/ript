@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- ability to show also partialy empty topics if it has one or more empty partitions
+
 ### Changed
 
 - tracker topic shards are now assigned based on murmur2 hash, aligns with producer partitioner
