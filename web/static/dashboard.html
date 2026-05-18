@@ -797,22 +797,24 @@
 
         function topicHasEmptyPartitions(topic) {
             if (!topic || typeof topic !== 'object') {
-                return false;
-            }
-
-            if (topic.has_empty_partitions === true) {
-                return true;
+                return { hasEmpty: false, isFullyEmpty: false };
             }
 
             if (topic.is_empty === true) {
-                return true;
+                return { hasEmpty: true, isFullyEmpty: true };
+            }
+
+            if (topic.has_empty_partitions === true) {
+                return { hasEmpty: true, isFullyEmpty: false };
             }
 
             if (Array.isArray(topic.partitions)) {
-                return topic.partitions.some(partition => partition && partition.is_empty === true);
+                const anyEmpty = topic.partitions.some(partition => partition && partition.is_empty === true);
+                const allEmpty = topic.partitions.length > 0 && topic.partitions.every(partition => partition && partition.is_empty === true);
+                return { hasEmpty: anyEmpty, isFullyEmpty: allEmpty };
             }
 
-            return false;
+            return { hasEmpty: false, isFullyEmpty: false };
         }
 
         function loadSettingsIntoUI() {
@@ -1140,9 +1142,12 @@
 
             body.innerHTML = topics.map(topic => {
                 const status = getTopicStatus(topic.oldest_partition_timestamp, topic.newest_partition_timestamp, thresholds);
-                const emptyBadge = topicHasEmptyPartitions(topic)
-                    ? '<span class="badge badge-status badge-empty">Has Empty</span>'
-                    : '-';
+                const emptyState = topicHasEmptyPartitions(topic);
+                const emptyBadge = emptyState.isFullyEmpty
+                    ? '<span class="badge badge-status badge-empty">Empty</span>'
+                    : emptyState.hasEmpty
+                        ? '<span class="badge badge-status badge-empty">Has Empty</span>'
+                        : '-';
 
                 return `
                     <tr>
