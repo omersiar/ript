@@ -546,7 +546,7 @@
                     <button class="btn btn-sm btn-outline-dark" id="lastPageBtn">⇥</button>
                 </div>
                 <div class="pager-size-group">
-                    <span id="pageInput" class="d-inline-flex align-items-center gap-1" style="display:none !important;">
+                    <span id="pageInput" class="d-inline-flex align-items-center gap-1" style="display:inline-flex;">
                         <span class="subtle">Page</span>
                         <select id="pageInputField" class="form-select form-select-sm" style="width:auto;"></select>
                         <span class="subtle" id="pageInputTotal"></span>
@@ -1071,12 +1071,24 @@
             const pageInputContainer = document.getElementById('pageInput');
             container.innerHTML = '';
 
+            pageInputContainer.hidden = false;
+            pageInputContainer.style.display = 'inline-flex';
+            const pageField = document.getElementById('pageInputField');
+            pageField.innerHTML = '';
+            for (let p = 1; p <= totalPages; p++) {
+                const opt = document.createElement('option');
+                opt.value = p;
+                opt.textContent = p;
+                if (p === effectivePage) opt.selected = true;
+                pageField.appendChild(opt);
+            }
+            document.getElementById('pageInputTotal').textContent = `of ${totalPages}`;
+
             const maxVisible = 7;
             let startPage, endPage;
             if (totalPages <= maxVisible) {
                 startPage = 1;
                 endPage = totalPages;
-                pageInputContainer.style.display = 'none';
             } else {
                 const half = Math.floor(maxVisible / 2);
                 startPage = Math.max(1, effectivePage - half);
@@ -1085,18 +1097,6 @@
                     endPage = totalPages;
                     startPage = Math.max(1, endPage - maxVisible + 1);
                 }
-                pageInputContainer.style.display = '';
-                pageInputContainer.classList.add('d-inline-flex');
-                const pageField = document.getElementById('pageInputField');
-                pageField.innerHTML = '';
-                for (let p = 1; p <= totalPages; p++) {
-                    const opt = document.createElement('option');
-                    opt.value = p;
-                    opt.textContent = p;
-                    if (p === effectivePage) opt.selected = true;
-                    pageField.appendChild(opt);
-                }
-                document.getElementById('pageInputTotal').textContent = `of ${totalPages}`;
             }
 
             for (let p = startPage; p <= endPage; p++) {

@@ -42,3 +42,6 @@ temp/
 
 kafkactl
 docker-compose.yml
+
+# QEMU — ignore generated artifacts only; track scripts and rootfs
+qemu-min/**
