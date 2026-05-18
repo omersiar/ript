@@ -557,10 +557,14 @@ func (s *Server) sortTopicResponses(topics []topicResponse, sortBy, sortDir stri
 			)
 		case "empty":
 			emptyI, emptyJ := 0, 0
-			if topics[i].HasEmptyPartitions {
+			if topics[i].IsEmpty {
+				emptyI = 2
+			} else if topics[i].HasEmptyPartitions {
 				emptyI = 1
 			}
-			if topics[j].HasEmptyPartitions {
+			if topics[j].IsEmpty {
+				emptyJ = 2
+			} else if topics[j].HasEmptyPartitions {
 				emptyJ = 1
 			}
 			c = cmp.Compare(emptyI, emptyJ)
