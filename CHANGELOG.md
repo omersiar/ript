@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- add "Has Unused" badge
+
 ### Changed
 
 - split empty topic/partitions as Empty and Has Empty

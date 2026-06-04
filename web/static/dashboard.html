@@ -294,6 +294,11 @@
             color: #f8f8f8;
         }
 
+        .badge-has-unused {
+            background: #5a5a5a;
+            color: #f0f0f0;
+        }
+
         .badge-empty {
             background: #cff4fc;
             color: #055160;
@@ -759,6 +764,8 @@
             return { label: 'Active', className: 'badge-active' };
         }
 
+        // getStatusByAge is used for individual partitions only — no Has Unused / Has Stale needed there.
+
         function timestampToAgeDays(epochSeconds) {
             if (!epochSeconds) return 0;
             return (Math.floor(Date.now() / 1000) - epochSeconds) / 86400;
@@ -788,6 +795,9 @@
 
             if (newestAgeDays >= unusedDays) {
                 return { label: 'Unused', className: 'badge-unused' };
+            }
+            if (oldestAgeDays >= unusedDays) {
+                return { label: 'Has Unused', className: 'badge-has-unused' };
             }
             if (newestAgeDays >= staleDays) {
                 return { label: 'Stale', className: 'badge-stale' };

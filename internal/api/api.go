@@ -519,11 +519,17 @@ func parseSort(c *gin.Context) (sortBy, sortDir string) {
 	return sortBy, sortDir
 }
 
-// statusOrder returns a sort bucket: 0=Active, 1=Has Stale, 2=Unused.
+// statusOrder returns a sort bucket: 0=Active, 1=Has Stale, 2=Stale, 3=Has Unused, 4=Unused.
 func statusOrder(t topicResponse, now int64, staleDays, unusedDays int) int {
 	newestAgeDays := float64(now-t.NewestPartitionTimestamp) / 86400
 	oldestAgeDays := float64(now-t.OldestPartitionTimestamp) / 86400
 	if newestAgeDays >= float64(unusedDays) {
+		return 4
+	}
+	if oldestAgeDays >= float64(unusedDays) {
+		return 3
+	}
+	if newestAgeDays >= float64(staleDays) {
 		return 2
 	}
 	if oldestAgeDays >= float64(staleDays) {
