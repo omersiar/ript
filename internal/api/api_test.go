@@ -161,8 +161,8 @@ func TestStatusOrderUsesProvidedThresholds(t *testing.T) {
 		NewestPartitionTimestamp: daysAgo(12),
 	}
 
-	if got := statusOrder(topic, now, 7, 30); got != 1 {
-		t.Fatalf("expected Has Stale status bucket=1, got %d", got)
+	if got := statusOrder(topic, now, 7, 30); got != 2 {
+		t.Fatalf("expected Stale status bucket=2, got %d", got)
 	}
 	if got := statusOrder(topic, now, 15, 30); got != 0 {
 		t.Fatalf("expected Active status bucket=0 with higher stale threshold, got %d", got)

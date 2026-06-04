@@ -808,6 +808,21 @@
             return { label: 'Active', className: 'badge-active' };
         }
 
+        function getTopicStatusFromApi(statusValue) {
+            switch (statusValue) {
+                case 'unused':
+                    return { label: 'Unused', className: 'badge-unused' };
+                case 'has_unused':
+                    return { label: 'Has Unused', className: 'badge-has-unused' };
+                case 'stale':
+                    return { label: 'Stale', className: 'badge-stale' };
+                case 'has_stale':
+                    return { label: 'Has Stale', className: 'badge-stale' };
+                default:
+                    return { label: 'Active', className: 'badge-active' };
+            }
+        }
+
         function topicHasEmptyPartitions(topic) {
             if (!topic || typeof topic !== 'object') {
                 return { hasEmpty: false, isFullyEmpty: false };
@@ -1154,7 +1169,9 @@
             const thresholds = getEffectiveThresholds();
 
             body.innerHTML = topics.map(topic => {
-                const status = getTopicStatus(topic.oldest_partition_timestamp, topic.newest_partition_timestamp, thresholds);
+                const status = typeof topic.status === 'string' && topic.status.length > 0
+                    ? getTopicStatusFromApi(topic.status)
+                    : getTopicStatus(topic.oldest_partition_timestamp, topic.newest_partition_timestamp, thresholds);
                 const emptyState = topicHasEmptyPartitions(topic);
                 const emptyBadge = emptyState.isFullyEmpty
                     ? '<span class="badge badge-status badge-empty">Empty</span>'

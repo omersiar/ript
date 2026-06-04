@@ -44,6 +44,7 @@ type topicResponse struct {
 	PartitionCount           int32  `json:"partition_count"`
 	OldestPartitionTimestamp int64  `json:"oldest_partition_timestamp"`
 	NewestPartitionTimestamp int64  `json:"newest_partition_timestamp"`
+	Status                   string `json:"status,omitempty"`
 	HasEmptyPartitions       bool   `json:"has_empty_partitions"`
 	IsEmpty                  bool   `json:"is_empty"`
 	TotalMessageCount        int64  `json:"total_message_count"`
@@ -538,8 +539,31 @@ func statusOrder(t topicResponse, now int64, staleDays, unusedDays int) int {
 	return 0
 }
 
+func statusLabelFromOrder(order int) string {
+	switch order {
+	case 4:
+		return "unused"
+	case 3:
+		return "has_unused"
+	case 2:
+		return "stale"
+	case 1:
+		return "has_stale"
+	default:
+		return "active"
+	}
+}
+
+func annotateTopicStatuses(topics []topicResponse, now int64, staleDays, unusedDays int) {
+	for i := range topics {
+		order := statusOrder(topics[i], now, staleDays, unusedDays)
+		topics[i].Status = statusLabelFromOrder(order)
+	}
+}
+
 func (s *Server) sortTopicResponses(topics []topicResponse, sortBy, sortDir string, staleDays, unusedDays int) {
 	now := time.Now().Unix()
+	annotateTopicStatuses(topics, now, staleDays, unusedDays)
 	sort.SliceStable(topics, func(i, j int) bool {
 		nameCmp := cmp.Compare(strings.ToLower(topics[i].Name), strings.ToLower(topics[j].Name))
 		if sortBy == "name" {
