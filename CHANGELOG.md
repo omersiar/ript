@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - split empty topic/partitions as Empty and Has Empty
+- split stale topic as Stale and Has Stale
 
 ## v0.3.2 - 2026-05-18
 

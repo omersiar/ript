@@ -789,6 +789,9 @@
             if (newestAgeDays >= unusedDays) {
                 return { label: 'Unused', className: 'badge-unused' };
             }
+            if (newestAgeDays >= staleDays) {
+                return { label: 'Stale', className: 'badge-stale' };
+            }
             if (oldestAgeDays >= staleDays) {
                 return { label: 'Has Stale', className: 'badge-stale' };
             }
