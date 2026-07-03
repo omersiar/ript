@@ -30,6 +30,8 @@ func init() {
 	rootCmd.AddCommand(newDaemonCmd())
 	rootCmd.AddCommand(newListCmd())
 	rootCmd.AddCommand(newScanCmd())
+	rootCmd.AddCommand(newIgnoreCmd())
+	rootCmd.AddCommand(newUnignoreCmd())
 }
 
 func validateOutputMode(value string) error {

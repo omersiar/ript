@@ -15,6 +15,8 @@ type TopicStatus struct {
 	LastUpdate         int64                    `json:"last_update"`
 	IsEmpty            bool                     `json:"is_empty"`
 	TotalMessageCount  int64                    `json:"total_message_count"`
+	Ignored            bool                     `json:"ignored"`
+	IgnoredAt          *int64                   `json:"ignored_at,omitempty"`
 }
 
 type PartitionInfo struct {

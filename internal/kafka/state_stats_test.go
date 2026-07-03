@@ -10,7 +10,7 @@ import (
 
 func TestApplyRecordToSnapshotCountsDuplicateAndTombstone(t *testing.T) {
 	snapshot := &StateSnapshot{
-		Topics:    make(map[string]map[int32]PartitionState),
+		Topics:    make(map[string]*TopicState),
 		Instances: make(map[string]HeartbeatRecord),
 	}
 	stats := &StateLoadStats{}
@@ -52,7 +52,7 @@ func TestApplyRecordToSnapshotCountsDuplicateAndTombstone(t *testing.T) {
 
 func TestApplyRecordToSnapshotCountsMalformedAndHeartbeats(t *testing.T) {
 	snapshot := &StateSnapshot{
-		Topics:    make(map[string]map[int32]PartitionState),
+		Topics:    make(map[string]*TopicState),
 		Instances: make(map[string]HeartbeatRecord),
 	}
 	stats := &StateLoadStats{}

@@ -48,6 +48,7 @@ type topicResponse struct {
 	HasEmptyPartitions       bool   `json:"has_empty_partitions"`
 	IsEmpty                  bool   `json:"is_empty"`
 	TotalMessageCount        int64  `json:"total_message_count"`
+	Ignored                  bool   `json:"ignored"`
 }
 
 type thresholdValues struct {
@@ -72,6 +73,8 @@ func (s *Server) setupRoutes() {
 	s.router.GET("/api/health", s.handleHealth)
 	s.router.GET("/api/topics", s.handleListTopics)
 	s.router.GET("/api/topics/:name", s.handleGetTopic)
+	s.router.PUT("/api/topics/:name/ignored", s.handleUpdateTopicIgnored)
+	s.router.POST("/api/topics/ignore", s.handleBulkUpdateIgnored)
 	s.router.GET("/api/unused", s.handleGetUnused)
 	s.router.GET("/api/empty", s.handleGetEmpty)
 	s.router.GET("/api/stats", s.handleStats)
@@ -132,11 +135,15 @@ func (s *Server) handleListTopics(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	ignoredFilter := parseIgnoredFilter(c)
 
 	topics := make([]topicResponse, 0, len(snapshot.Topics))
 	for _, topic := range snapshot.Topics {
 		r := buildTopicResponse(topic)
 		if searchRe != nil && !searchRe.MatchString(r.Name) {
+			continue
+		}
+		if !ignoredFilter(&r) {
 			continue
 		}
 		topics = append(topics, r)
@@ -205,6 +212,7 @@ func (s *Server) handleGetTopic(c *gin.Context) {
 		"newest_timestamp": newestTS,
 		"last_update":      topic.LastUpdate,
 		"is_empty":         topic.IsEmpty,
+		"ignored":          topic.Ignored,
 	})
 }
 
@@ -230,6 +238,7 @@ func (s *Server) handleGetUnused(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	ignoredFilter := parseIgnoredFilter(c)
 
 	unused := s.trackerPtr.GetUnusedTopics(thresholds.UnusedDays)
 
@@ -237,6 +246,9 @@ func (s *Server) handleGetUnused(c *gin.Context) {
 	for _, topic := range unused {
 		r := buildTopicResponse(topic)
 		if searchRe != nil && !searchRe.MatchString(r.Name) {
+			continue
+		}
+		if !ignoredFilter(&r) {
 			continue
 		}
 		topics = append(topics, r)
@@ -276,6 +288,7 @@ func (s *Server) handleGetEmpty(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	ignoredFilter := parseIgnoredFilter(c)
 
 	emptyTopics := s.trackerPtr.GetEmptyTopics()
 
@@ -283,6 +296,9 @@ func (s *Server) handleGetEmpty(c *gin.Context) {
 	for _, topic := range emptyTopics {
 		r := buildTopicResponse(topic)
 		if searchRe != nil && !searchRe.MatchString(r.Name) {
+			continue
+		}
+		if !ignoredFilter(&r) {
 			continue
 		}
 		topics = append(topics, r)
@@ -478,6 +494,7 @@ func buildTopicResponse(topic *models.TopicStatus) topicResponse {
 		HasEmptyPartitions:       hasEmptyPartitions,
 		IsEmpty:                  topic.IsEmpty,
 		TotalMessageCount:        topic.TotalMessageCount,
+		Ignored:                  topic.Ignored,
 	}
 }
 
@@ -518,6 +535,24 @@ func parseSort(c *gin.Context) (sortBy, sortDir string) {
 		sortDir = "asc"
 	}
 	return sortBy, sortDir
+}
+
+// parseIgnoredFilter returns a filter function based on the "ignored" query param.
+// Valid values: "true" (only ignored), "false" (only non-ignored), "all" (both, default).
+// Returns a predicate function that returns true if the topic should be included.
+func parseIgnoredFilter(c *gin.Context) func(*topicResponse) bool {
+	ignoredParam := strings.ToLower(strings.TrimSpace(c.DefaultQuery("ignored", "false")))
+	switch ignoredParam {
+	case "true":
+		return func(t *topicResponse) bool { return t.Ignored }
+	case "false":
+		return func(t *topicResponse) bool { return !t.Ignored }
+	case "all":
+		return func(t *topicResponse) bool { return true }
+	default:
+		// Default to "false" - show non-ignored topics
+		return func(t *topicResponse) bool { return !t.Ignored }
+	}
 }
 
 // statusOrder returns a sort bucket: 0=Active, 1=Has Stale, 2=Stale, 3=Has Unused, 4=Unused.

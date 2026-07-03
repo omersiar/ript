@@ -91,12 +91,13 @@ func validateTrackerTopicConfigs(actual map[string]string, expected map[string]s
 }
 
 // StateSnapshot is the raw loaded state from the tracker topic, keyed by topic
-// name then partition ID. It is a lightweight intermediate type used to
-// bootstrap the in-memory ClusterSnapshot on startup.
+// name. It is a lightweight intermediate type used to bootstrap the in-memory
+// ClusterSnapshot on startup. Topics map stores full TopicState to preserve
+// all metadata including the Ignored flag.
 type StateSnapshot struct {
 	Timestamp int64
 	Version   int
-	Topics    map[string]map[int32]PartitionState
+	Topics    map[string]*TopicState
 	Instances map[string]HeartbeatRecord
 }
 
@@ -108,6 +109,8 @@ type TopicState struct {
 	Topic      string                   `json:"topic"`
 	Timestamp  int64                    `json:"timestamp"`
 	Partitions map[int32]PartitionState `json:"partitions"`
+	Ignored    bool                     `json:"ignored"`
+	IgnoredAt  *int64                   `json:"ignored_at,omitempty"`
 }
 
 // PartitionState is the persisted offset and timestamp for a single partition.
@@ -268,6 +271,8 @@ func (sm *StateManager) SaveSnapshot(ctx context.Context, snapshot *models.Clust
 			Topic:      topicName,
 			Timestamp:  time.Now().UTC().Unix(),
 			Partitions: make(map[int32]PartitionState, len(topicStatus.Partitions)),
+			Ignored:    topicStatus.Ignored,
+			IgnoredAt:  topicStatus.IgnoredAt,
 		}
 		for partID, partInfo := range topicStatus.Partitions {
 			state.Partitions[partID] = PartitionState{
@@ -318,6 +323,8 @@ func (sm *StateManager) SaveTopicState(ctx context.Context, topicName string, to
 		Topic:      topicName,
 		Timestamp:  time.Now().UTC().Unix(),
 		Partitions: make(map[int32]PartitionState, len(topicStatus.Partitions)),
+		Ignored:    topicStatus.Ignored,
+		IgnoredAt:  topicStatus.IgnoredAt,
 	}
 	for partID, partInfo := range topicStatus.Partitions {
 		state.Partitions[partID] = PartitionState{
@@ -442,7 +449,7 @@ func (sm *StateManager) LoadLatestSnapshot(ctx context.Context) (*StateSnapshot,
 	snapshot := &StateSnapshot{
 		Timestamp: time.Now().UTC().Unix(),
 		Version:   1,
-		Topics:    make(map[string]map[int32]PartitionState),
+		Topics:    make(map[string]*TopicState),
 		Instances: make(map[string]HeartbeatRecord),
 	}
 
@@ -581,7 +588,7 @@ func applyRecordToSnapshot(snapshot *StateSnapshot, stats *StateLoadStats, seenK
 		logging.Warn("Failed to unmarshal state for key %s: %v", key, err)
 		return
 	}
-	snapshot.Topics[state.Topic] = state.Partitions
+	snapshot.Topics[state.Topic] = &state
 }
 
 func finalizeStateLoadStats(snapshot *StateSnapshot, stats *StateLoadStats, seenKeys map[string]struct{}, start time.Time) {

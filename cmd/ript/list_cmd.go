@@ -16,6 +16,7 @@ import (
 type listOptions struct {
 	includeStalePartitions bool
 	emptyOnly              bool
+	ignoredOnly            string
 	prefix                 string
 	search                 string
 	regex                  bool
@@ -37,6 +38,7 @@ func newListCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&opts.includeStalePartitions, "include-stale-partitions", false, "Include stale partition details for each topic")
 	cmd.Flags().BoolVar(&opts.emptyOnly, "empty-only", false, "Only list topics where all partitions have no records")
+	cmd.Flags().StringVar(&opts.ignoredOnly, "ignored", "false", "Filter by ignored status: true|false|all (default: false - show non-ignored)")
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "Only include topics with this prefix")
 	cmd.Flags().StringVar(&opts.search, "search", "", "Filter topics by substring or regex")
 	cmd.Flags().BoolVar(&opts.regex, "regex", false, "Interpret --search as regex")
@@ -72,7 +74,7 @@ func runList(ctx context.Context, opts *listOptions) error {
 		return err
 	}
 
-	filtered, err := filterAndSortTopics(topics, opts.prefix, opts.search, opts.regex, opts.unusedDays, opts.emptyOnly)
+	filtered, err := filterAndSortTopics(topics, opts.prefix, opts.search, opts.regex, opts.unusedDays, opts.emptyOnly, opts.ignoredOnly)
 	if err != nil {
 		return err
 	}

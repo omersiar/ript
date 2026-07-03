@@ -412,6 +412,13 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 			LastUpdate:     scanTime,
 		}
 
+		// Preserve the Ignored flag from the previous snapshot to ensure that
+		// ignore state set via API persists across scan cycles.
+		if previousTopic, ok := previousGlobalSnapshot.Topics[meta.name]; ok {
+			topicStatus.Ignored = previousTopic.Ignored
+			topicStatus.IgnoredAt = previousTopic.IgnoredAt
+		}
+
 		var oldestTimestamp int64
 		var newestTimestamp int64
 
@@ -504,8 +511,10 @@ func (t *TopicTracker) syncGlobalFromState(snapshot *kafka.StateSnapshot) {
 	t.globalMu.Lock()
 	defer t.globalMu.Unlock()
 	t.globalTopics = make(map[string]*models.TopicStatus, len(snapshot.Topics))
-	for topicName, partitions := range snapshot.Topics {
-		t.globalTopics[topicName] = buildTopicStatusFromStatePartitions(topicName, snapshot.Timestamp, partitions)
+	for topicName, topicState := range snapshot.Topics {
+		if topicState != nil {
+			t.globalTopics[topicName] = buildTopicStatusFromState(topicState)
+		}
 	}
 	t.globalSnapshot.Store(t.buildGlobalSnapshotLocked())
 }
@@ -530,7 +539,7 @@ func (t *TopicTracker) applyGlobalRecord(key string, value []byte) {
 			logging.Warn("applyGlobalRecord: failed to unmarshal topic state for key %s: %v", key, err)
 			return
 		}
-		incoming := buildTopicStatusFromStatePartitions(state.Topic, state.Timestamp, state.Partitions)
+		incoming := buildTopicStatusFromState(&state)
 		// Merge rather than replace: preserve partition data from the existing
 		// global state for any partitions absent in the incoming record. This
 		// guards against partial writes (e.g. records written by a single
@@ -607,20 +616,22 @@ func (t *TopicTracker) startGlobalConsumerLoop(ctx context.Context, resumeOffset
 	}()
 }
 
-// buildTopicStatusFromStatePartitions converts the raw persisted partition map
-// into a TopicStatus with computed Age and aggregate timestamps. Used both for
-// the initial state load and for incremental global consumer updates.
-func buildTopicStatusFromStatePartitions(topicName string, ts int64, partitions map[int32]kafka.PartitionState) *models.TopicStatus {
+// buildTopicStatusFromState converts a TopicState into a TopicStatus with
+// computed Age and aggregate timestamps, preserving the Ignored flag.
+// Used both for the initial state load and for incremental global consumer updates.
+func buildTopicStatusFromState(state *kafka.TopicState) *models.TopicStatus {
 	topicStatus := &models.TopicStatus{
-		Name:       topicName,
-		Partitions: make(map[int32]*models.PartitionInfo, len(partitions)),
-		LastUpdate: ts,
+		Name:       state.Topic,
+		Partitions: make(map[int32]*models.PartitionInfo, len(state.Partitions)),
+		LastUpdate: state.Timestamp,
+		Ignored:    state.Ignored,
+		IgnoredAt:  state.IgnoredAt,
 	}
 
 	var oldestTimestamp int64
 	var newestTimestamp int64
 
-	for partID, part := range partitions {
+	for partID, part := range state.Partitions {
 		age := models.CalculateDuration(time.Unix(part.Timestamp, 0).UTC())
 		topicStatus.Partitions[partID] = &models.PartitionInfo{
 			Partition:    partID,
@@ -640,7 +651,7 @@ func buildTopicStatusFromStatePartitions(topicName string, ts int64, partitions 
 		topicStatus.TotalMessageCount += part.MessageCount
 	}
 
-	topicStatus.PartitionCount = int32(len(partitions))
+	topicStatus.PartitionCount = int32(len(state.Partitions))
 	if oldestTimestamp > 0 {
 		topicStatus.OldestPartitionAge = models.CalculateDuration(time.Unix(oldestTimestamp, 0).UTC())
 	}
@@ -663,7 +674,8 @@ func buildTopicStatusFromStatePartitions(topicName string, ts int64, partitions 
 // incoming, plus any partitions from existing that are absent in the incoming
 // record. The incoming record takes precedence for every partition it covers.
 // Aggregate fields (PartitionCount, oldest/newest ages) are recomputed from the
-// full merged set so the result is always self-consistent.
+// full merged set so the result is always self-consistent. The Ignored flag from
+// incoming takes precedence (ensures cluster-wide ignore state is applied).
 //
 // This prevents a write from one instance — which only covers its owned
 // partitions — from inadvertently discarding state for partitions held by other
@@ -676,6 +688,8 @@ func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.Topi
 	merged := &models.TopicStatus{
 		Name:       incoming.Name,
 		LastUpdate: incoming.LastUpdate,
+		Ignored:    incoming.Ignored,
+		IgnoredAt:  incoming.IgnoredAt,
 		Partitions: make(map[int32]*models.PartitionInfo, len(incoming.Partitions)+len(existing.Partitions)),
 	}
 
@@ -808,12 +822,15 @@ func (t *TopicTracker) GetSnapshot() *models.ClusterSnapshot {
 }
 
 // BuildTopicStatusesFromSnapshot converts a raw StateSnapshot into TopicStatus
-// values with computed ages, reusing the same conversion performed during daemon
-// startup. Intended for CLI commands that load state without starting the daemon.
+// values with computed ages, preserving the Ignored flag. Reuses the same
+// conversion performed during daemon startup. Intended for CLI commands that load
+// state without starting the daemon.
 func BuildTopicStatusesFromSnapshot(snapshot *kafka.StateSnapshot) map[string]*models.TopicStatus {
 	result := make(map[string]*models.TopicStatus, len(snapshot.Topics))
-	for topicName, partitions := range snapshot.Topics {
-		result[topicName] = buildTopicStatusFromStatePartitions(topicName, snapshot.Timestamp, partitions)
+	for topicName, topicState := range snapshot.Topics {
+		if topicState != nil {
+			result[topicName] = buildTopicStatusFromState(topicState)
+		}
 	}
 	return result
 }
@@ -885,6 +902,42 @@ func (t *TopicTracker) GetTopic(name string) *models.TopicStatus {
 	if topic, exists := snapshot.Topics[name]; exists {
 		return topic
 	}
+	return nil
+}
+
+// UpdateTopicIgnored updates the ignored flag for a topic and persists the
+// change to the tracker topic so all instances see the updated state.
+func (t *TopicTracker) UpdateTopicIgnored(ctx context.Context, topicName string, ignored bool) error {
+	t.globalMu.Lock()
+	defer t.globalMu.Unlock()
+
+	topic, exists := t.globalTopics[topicName]
+	if !exists {
+		return fmt.Errorf("topic not found: %s", topicName)
+	}
+
+	// Update the ignored flag
+	topic.Ignored = ignored
+	if ignored {
+		now := time.Now().UTC().Unix()
+		topic.IgnoredAt = &now
+	} else {
+		topic.IgnoredAt = nil
+	}
+
+	// Persist the updated state to the tracker topic
+	if err := t.stateManager.SaveTopicState(ctx, topicName, topic); err != nil {
+		// Revert the change if save failed
+		topic.Ignored = !ignored
+		if !ignored {
+			topic.IgnoredAt = nil
+		}
+		return fmt.Errorf("failed to persist ignore state: %w", err)
+	}
+
+	// Rebuild and publish the updated snapshot
+	t.globalSnapshot.Store(t.buildGlobalSnapshotLocked())
+
 	return nil
 }
 

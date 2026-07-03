@@ -270,6 +270,108 @@
             text-decoration-color: #202020;
         }
 
+        .topic-row-ignored {
+            background: #f7f1e8;
+        }
+
+        .topic-row-ignored td {
+            background: #f7f1e8;
+        }
+
+        .topic-row-ignored .topic-link {
+            text-decoration-color: #b79d7a;
+        }
+
+        .topic-link-meta {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+
+        .topic-name-wrap {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            max-width: 100%;
+        }
+
+        .topic-copy-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.7rem;
+            height: 1.7rem;
+            padding: 0;
+            border: 1px solid transparent;
+            border-radius: 999px;
+            background: transparent;
+            color: var(--ink-muted);
+            transition: color 0.12s ease, background-color 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+        }
+
+        .topic-copy-btn:hover,
+        .topic-copy-btn:focus-visible {
+            color: var(--ink);
+            background: #f2f2f2;
+            border-color: #d3d3d3;
+            outline: none;
+        }
+
+        .topic-copy-btn svg {
+            width: 0.9rem;
+            height: 0.9rem;
+        }
+
+        .topic-copy-btn-hover {
+            opacity: 0;
+        }
+
+        #topicsTableBody tr:hover .topic-copy-btn-hover,
+        #topicsTableBody tr:focus-within .topic-copy-btn-hover {
+            opacity: 1;
+        }
+
+        .topic-copy-btn.copied {
+            color: #055160;
+            background: #cff4fc;
+            border-color: #9ee8f8;
+        }
+
+        .topic-modal-title {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            flex-wrap: wrap;
+        }
+
+        .badge-ignored {
+            background: #f8d7da;
+            color: #842029;
+        }
+
+        .topic-action-btn {
+            border-radius: 999px;
+            border: 1px solid #bcbcbc;
+            background: #f8f8f8;
+            color: #1e1e1e;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            padding: 0.28rem 0.65rem;
+            text-transform: uppercase;
+        }
+
+        .topic-action-btn:hover {
+            border-color: #7e7e7e;
+            background: #ffffff;
+        }
+
+        .topic-action-btn:disabled {
+            opacity: 0.7;
+            cursor: progress;
+        }
+
         .badge-status {
             border-radius: 999px;
             font-size: 0.7rem;
@@ -522,6 +624,7 @@
                 </div>
                 <div class="pb-1">
                     <button type="button" class="filter-chip" id="emptyOnlyToggle" aria-pressed="false" title="Show only topics where all partitions have no records">Empty only</button>
+                    <button type="button" class="filter-chip" id="showIgnoredToggle" aria-pressed="false" title="Show topics marked as ignored">Show ignored</button>
                 </div>
             </div>
             <div class="table-responsive">
@@ -598,11 +701,22 @@
         <div class="modal-dialog modal-xl modal-dialog-scrollable">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="topicModalTitle">Topic Details</h5>
+                    <h5 class="modal-title topic-modal-title" id="topicModalTitle">
+                        <span id="topicModalTitleText">Topic Details</span>
+                        <button type="button" class="topic-copy-btn" id="topicModalCopyBtn" aria-label="Copy topic name" title="Copy topic name" style="display:none;">
+                            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                                <path d="M10 1.75A2.25 2.25 0 0 1 12.25 4v.75H10A2.25 2.25 0 0 0 7.75 7v5.25H6A2.25 2.25 0 0 1 3.75 10V4A2.25 2.25 0 0 1 6 1.75h4Z"></path>
+                                <path d="M10 6.25c-.414 0-.75.336-.75.75v5c0 .414.336.75.75.75h3.5c.414 0 .75-.336.75-.75V7c0-.414-.336-.75-.75-.75H10ZM8.25 7A1.75 1.75 0 0 1 10 5.25h3.5A1.75 1.75 0 0 1 15.25 7v5a1.75 1.75 0 0 1-1.75 1.75H10A1.75 1.75 0 0 1 8.25 12V7Z"></path>
+                            </svg>
+                        </button>
+                    </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <div id="topicDetailsMeta" class="subtle mb-3"></div>
+                    <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
+                        <div id="topicDetailsMeta" class="subtle mb-0"></div>
+                        <button type="button" class="topic-action-btn" id="topicIgnoreToggleBtn" style="display:none;">Ignore</button>
+                    </div>
                     <div id="topicEmptyBanner" style="display:none;background:#cff4fc;border:1px solid #9ee8f8;color:#055160;border-radius:8px;" class="py-2 px-3 mb-3 small" role="alert"><strong>This topic is empty.</strong> All partitions report no records (earliest offset = latest offset).</div>
                     <div class="table-responsive">
                         <table class="table table-sm table-hover">
@@ -660,7 +774,8 @@
             stale: 'ript.staleDays',
             unused: 'ript.unusedDays',
             pageSize: 'ript.pageSize',
-            emptyOnly: 'ript.emptyOnly'
+            emptyOnly: 'ript.emptyOnly',
+            showIgnored: 'ript.showIgnored'
         };
         const FALLBACK_DEFAULTS = {
             staleDays: 7,
@@ -683,6 +798,7 @@
         let searchQuery = '';
         let searchDebounceTimer = null;
         let emptyOnlyFilter = false;
+        let showIgnoredFilter = false;
 
         const instanceDetailsModal = new bootstrap.Modal(document.getElementById('instanceDetailsModal'));
         const topicDetailsModal = new bootstrap.Modal(document.getElementById('topicDetailsModal'));
@@ -732,6 +848,80 @@
             return div.innerHTML;
         }
 
+        function copyIconSvg() {
+            return `
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                    <path d="M10 1.75A2.25 2.25 0 0 1 12.25 4v.75H10A2.25 2.25 0 0 0 7.75 7v5.25H6A2.25 2.25 0 0 1 3.75 10V4A2.25 2.25 0 0 1 6 1.75h4Z"></path>
+                    <path d="M10 6.25c-.414 0-.75.336-.75.75v5c0 .414.336.75.75.75h3.5c.414 0 .75-.336.75-.75V7c0-.414-.336-.75-.75-.75H10ZM8.25 7A1.75 1.75 0 0 1 10 5.25h3.5A1.75 1.75 0 0 1 15.25 7v5a1.75 1.75 0 0 1-1.75 1.75H10A1.75 1.75 0 0 1 8.25 12V7Z"></path>
+                </svg>
+            `;
+        }
+
+        function renderCopyButton(value, hoverOnly = false) {
+            return `<button type="button" class="topic-copy-btn${hoverOnly ? ' topic-copy-btn-hover' : ''}" data-copy-value="${escapeHtml(value)}" aria-label="Copy topic name" title="Copy topic name">${copyIconSvg()}</button>`;
+        }
+
+        async function copyTextToClipboard(text, sourceElement = null) {
+            if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                try {
+                    await navigator.clipboard.writeText(text);
+                    return;
+                } catch (error) {
+                    console.warn('Clipboard API copy failed, falling back to execCommand:', error);
+                }
+            }
+
+            const input = document.createElement('input');
+            const copyRoot = sourceElement?.closest('.modal.show') || document.body;
+            input.value = text;
+            input.setAttribute('readonly', '');
+            input.style.position = 'fixed';
+            input.style.opacity = '0';
+            input.style.pointerEvents = 'none';
+            copyRoot.appendChild(input);
+            input.focus();
+            input.select();
+            input.setSelectionRange(0, input.value.length);
+
+            try {
+                const copied = document.execCommand('copy');
+                if (!copied) {
+                    throw new Error('Clipboard copy command failed');
+                }
+            } finally {
+                copyRoot.removeChild(input);
+            }
+        }
+
+        function showCopySuccess(button) {
+            const originalTitle = button.getAttribute('title') || 'Copy topic name';
+            const originalLabel = button.getAttribute('aria-label') || 'Copy topic name';
+            button.classList.add('copied');
+            button.setAttribute('title', 'Copied');
+            button.setAttribute('aria-label', 'Copied');
+            clearTimeout(button.copyResetTimer);
+            button.copyResetTimer = setTimeout(() => {
+                button.classList.remove('copied');
+                button.setAttribute('title', originalTitle);
+                button.setAttribute('aria-label', originalLabel);
+            }, 1200);
+        }
+
+        function handleCopyButtonClick(button) {
+            const value = button?.getAttribute('data-copy-value');
+            if (!value) {
+                showError('Topic name unavailable for copy.');
+                return;
+            }
+
+            void copyTextToClipboard(value, button)
+                .then(() => showCopySuccess(button))
+                .catch(error => {
+                    console.error('Error copying topic name:', error);
+                    showError('Failed to copy topic name.');
+                });
+        }
+
         function getConfiguredThresholds() {
             const staleDays = parseInt(localStorage.getItem(SETTINGS_KEYS.stale) || `${DEFAULTS.staleDays}`, 10);
             const unusedDays = parseInt(localStorage.getItem(SETTINGS_KEYS.unused) || `${DEFAULTS.unusedDays}`, 10);
@@ -749,6 +939,71 @@
                 staleDays,
                 unusedDays: Math.max(staleDays, configured.unusedDays)
             };
+        }
+
+        function syncBrowserUrl() {
+            const url = new URL(window.location.href);
+            if (searchQuery) {
+                url.searchParams.set('search', searchQuery);
+            } else {
+                url.searchParams.delete('search');
+            }
+            url.searchParams.set('page', `${currentPage}`);
+            url.searchParams.set('limit', `${pageSize}`);
+            if (sortColumn) {
+                url.searchParams.set('sort_by', sortColumn);
+                url.searchParams.set('sort_dir', sortDirection);
+            } else {
+                url.searchParams.delete('sort_by');
+                url.searchParams.delete('sort_dir');
+            }
+            url.searchParams.set('empty', String(emptyOnlyFilter));
+            url.searchParams.set('ignored', String(showIgnoredFilter));
+            window.history.replaceState({}, '', url);
+        }
+
+        function loadStateFromUrl() {
+            const url = new URL(window.location.href);
+            const search = (url.searchParams.get('search') || '').trim();
+            searchQuery = search;
+
+            const input = document.getElementById('topicSearch');
+            input.value = search;
+            document.getElementById('searchClearBtn').style.display = search.length > 0 ? '' : 'none';
+
+            const pageParam = parseInt(url.searchParams.get('page') || '', 10);
+            if (Number.isInteger(pageParam) && pageParam > 0) {
+                currentPage = pageParam;
+            }
+
+            const limitParam = parseInt(url.searchParams.get('limit') || '', 10);
+            if (Number.isInteger(limitParam) && limitParam > 0) {
+                pageSize = limitParam;
+                document.getElementById('pageSize').value = `${pageSize}`;
+            }
+
+            const sortParam = url.searchParams.get('sort_by');
+            const allowedSortColumns = new Set(['name', 'partitions', 'messages', 'age', 'status', 'empty']);
+            if (sortParam && allowedSortColumns.has(sortParam)) {
+                sortColumn = sortParam;
+                const sortDirParam = url.searchParams.get('sort_dir');
+                sortDirection = sortDirParam === 'desc' ? 'desc' : 'asc';
+            } else {
+                sortColumn = null;
+                sortDirection = 'asc';
+            }
+
+            const emptyParam = url.searchParams.get('empty');
+            if (emptyParam === 'true' || emptyParam === 'false') {
+                emptyOnlyFilter = emptyParam === 'true';
+                updateEmptyOnlyToggleUI();
+            }
+
+            const ignoredParam = url.searchParams.get('ignored');
+            if (ignoredParam === 'true' || ignoredParam === 'false') {
+                showIgnoredFilter = ignoredParam === 'true';
+                updateShowIgnoredToggleUI();
+            }
         }
 
         function getStatusByAge(ageDays, thresholds = getEffectiveThresholds()) {
@@ -852,11 +1107,13 @@
             const unused = parseInt(localStorage.getItem(SETTINGS_KEYS.unused) || `${DEFAULTS.unusedDays}`, 10);
             pageSize = parseInt(localStorage.getItem(SETTINGS_KEYS.pageSize) || `${DEFAULTS.pageSize}`, 10);
             emptyOnlyFilter = localStorage.getItem(SETTINGS_KEYS.emptyOnly) === 'true';
+            showIgnoredFilter = localStorage.getItem(SETTINGS_KEYS.showIgnored) === 'true';
 
             document.getElementById('staleThresholdSetting').value = stale;
             document.getElementById('unusedThresholdSetting').value = unused;
             document.getElementById('pageSize').value = `${pageSize}`;
             updateEmptyOnlyToggleUI();
+            updateShowIgnoredToggleUI();
         }
 
         function validateSettings(stale, unused) {
@@ -890,6 +1147,19 @@
                 btn.classList.remove('active');
                 btn.setAttribute('aria-pressed', 'false');
                 btn.textContent = 'Empty only';
+            }
+        }
+
+        function updateShowIgnoredToggleUI() {
+            const btn = document.getElementById('showIgnoredToggle');
+            if (showIgnoredFilter) {
+                btn.classList.add('active');
+                btn.setAttribute('aria-pressed', 'true');
+                btn.textContent = 'Show ignored ×';
+            } else {
+                btn.classList.remove('active');
+                btn.setAttribute('aria-pressed', 'false');
+                btn.textContent = 'Show ignored';
             }
         }
 
@@ -1020,6 +1290,8 @@
                 params.set('search', searchQuery);
             }
 
+            params.set('ignored', showIgnoredFilter ? 'all' : 'false');
+
             const endpoint = emptyOnlyFilter ? 'empty' : 'topics';
             return `${API_BASE}/${endpoint}?${params.toString()}`;
         }
@@ -1070,6 +1342,7 @@
 
                 renderTopics(topics);
                 updatePaginationUI(topics.length);
+                syncBrowserUrl();
             } catch (error) {
                 console.error('Error loading topics:', error);
                 showError('Failed to load topics list.');
@@ -1178,10 +1451,21 @@
                     : emptyState.hasEmpty
                         ? '<span class="badge badge-status badge-empty">Has Empty</span>'
                         : '-';
+                const ignoredBadge = topic.ignored
+                    ? '<span class="badge badge-status badge-ignored">Ignored</span>'
+                    : '';
 
                 return `
-                    <tr>
-                        <td><span class="topic-link" data-topic-name="${escapeHtml(topic.name)}">${escapeHtml(topic.name)}</span></td>
+                    <tr class="${topic.ignored ? 'topic-row-ignored' : ''}">
+                        <td>
+                            <div class="topic-link-meta">
+                                <span class="topic-name-wrap">
+                                    <span class="topic-link" data-topic-name="${escapeHtml(topic.name)}">${escapeHtml(topic.name)}</span>
+                                    ${renderCopyButton(topic.name, true)}
+                                </span>
+                                ${ignoredBadge}
+                            </div>
+                        </td>
                         <td>${topic.partition_count}</td>
                         <td>${(topic.total_message_count || 0).toLocaleString()}</td>
                         <td><code>${formatAge(topic.oldest_partition_timestamp)}</code></td>
@@ -1196,9 +1480,21 @@
             const meta = document.getElementById('topicDetailsMeta');
             const tbody = document.getElementById('topicDetailsTableBody');
             const emptyBanner = document.getElementById('topicEmptyBanner');
-            document.getElementById('topicModalTitle').textContent = `Topic: ${topicName}`;
+            const ignoreBtn = document.getElementById('topicIgnoreToggleBtn');
+            const modalTitle = document.getElementById('topicModalTitleText');
+            const modalCopyBtn = document.getElementById('topicModalCopyBtn');
 
-            meta.textContent = `Partitions: ${details.partition_count} | Oldest age: ${formatAge(details.oldest_timestamp)} | Last update: ${formatRelativeTime(details.last_update)}`;
+            modalTitle.textContent = `Topic: ${topicName}`;
+            modalCopyBtn.style.display = '';
+            modalCopyBtn.setAttribute('data-copy-value', topicName);
+
+            meta.textContent = `Partitions: ${details.partition_count} | Oldest age: ${formatAge(details.oldest_timestamp)} | Last update: ${formatRelativeTime(details.last_update)} | Ignored: ${details.ignored ? 'yes' : 'no'}`;
+            ignoreBtn.style.display = '';
+            ignoreBtn.disabled = false;
+            ignoreBtn.setAttribute('data-topic-name', topicName);
+            ignoreBtn.setAttribute('data-topic-ignore-action', details.ignored ? 'false' : 'true');
+            ignoreBtn.setAttribute('data-busy-label', details.ignored ? 'Unignoring...' : 'Ignoring...');
+            ignoreBtn.textContent = details.ignored ? 'Unignore' : 'Ignore';
             emptyBanner.style.display = details.is_empty ? '' : 'none';
 
             const partitions = (details.partitions || []).slice().sort((a, b) => a.partition - b.partition);
@@ -1228,9 +1524,15 @@
 
         async function openTopicDetails(topicName) {
             topicDetailsModal.show();
-            document.getElementById('topicModalTitle').textContent = `Topic: ${topicName}`;
+            document.getElementById('topicModalTitleText').textContent = `Topic: ${topicName}`;
             document.getElementById('topicDetailsMeta').textContent = 'Loading topic details...';
-document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6" class="loading">Loading partition details...</td></tr>';
+            document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6" class="loading">Loading partition details...</td></tr>';
+            const ignoreBtn = document.getElementById('topicIgnoreToggleBtn');
+            const modalCopyBtn = document.getElementById('topicModalCopyBtn');
+            ignoreBtn.style.display = 'none';
+            ignoreBtn.disabled = true;
+            modalCopyBtn.style.display = '';
+            modalCopyBtn.setAttribute('data-copy-value', topicName);
 
             try {
                 const response = await fetch(`${API_BASE}/topics/${encodeURIComponent(topicName)}`);
@@ -1243,6 +1545,40 @@ document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6
                 console.error('Error loading topic details:', error);
                 document.getElementById('topicDetailsMeta').textContent = 'Failed to load topic details.';
                 document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6" class="loading">Unable to load partition details.</td></tr>';
+                ignoreBtn.style.display = 'none';
+            }
+        }
+
+        async function setTopicIgnored(topicName, ignored, button) {
+            const originalLabel = button ? button.textContent : '';
+            const busyLabel = button ? button.getAttribute('data-busy-label') || originalLabel : originalLabel;
+
+            if (button) {
+                button.disabled = true;
+                button.textContent = busyLabel;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/topics/${encodeURIComponent(topicName)}/ignored`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ignored })
+                });
+
+                if (!response.ok) {
+                    const body = await response.json().catch(() => null);
+                    throw new Error(body?.error || `update returned ${response.status}`);
+                }
+
+                await refreshAll();
+            } catch (error) {
+                console.error('Error updating topic ignore state:', error);
+                showError(`Failed to ${ignored ? 'ignore' : 'unignore'} topic ${topicName}.`);
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = originalLabel;
+                }
             }
         }
 
@@ -1349,6 +1685,14 @@ document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6
             await loadTopics();
         });
 
+        document.getElementById('showIgnoredToggle').addEventListener('click', async () => {
+            showIgnoredFilter = !showIgnoredFilter;
+            localStorage.setItem(SETTINGS_KEYS.showIgnored, String(showIgnoredFilter));
+            updateShowIgnoredToggleUI();
+            currentPage = 1;
+            await loadTopics();
+        });
+
         document.getElementById('topicSearch').addEventListener('keydown', async (event) => {
             if (event.key === 'Escape') {
                 event.preventDefault();
@@ -1392,6 +1736,14 @@ document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6
         });
 
         document.getElementById('topicsTableBody').addEventListener('click', (event) => {
+            const copyButton = event.target.closest('[data-copy-value]');
+            if (copyButton) {
+                event.preventDefault();
+                event.stopPropagation();
+                handleCopyButtonClick(copyButton);
+                return;
+            }
+
             const target = event.target.closest('[data-topic-name]');
             if (!target) {
                 return;
@@ -1401,6 +1753,25 @@ document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6
                 return;
             }
             openTopicDetails(topicName);
+        });
+
+        document.getElementById('topicModalCopyBtn').addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const button = event.currentTarget;
+            handleCopyButtonClick(button);
+        });
+
+        document.getElementById('topicIgnoreToggleBtn').addEventListener('click', async (event) => {
+            const button = event.currentTarget;
+            const topicName = button.getAttribute('data-topic-name');
+            const ignored = button.getAttribute('data-topic-ignore-action') === 'true';
+            if (!topicName) {
+                return;
+            }
+
+            await setTopicIgnored(topicName, ignored, button);
+            await openTopicDetails(topicName);
         });
 
         document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
@@ -1442,6 +1813,7 @@ document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6
         window.addEventListener('load', async () => {
             await loadDefaults();
             loadSettingsIntoUI();
+            loadStateFromUrl();
             setInstancesPanelVisibility(false);
             await refreshAll();
             setInterval(async () => {

@@ -176,9 +176,23 @@ func TestSyncGlobalFromStatePopulatesSnapshot(t *testing.T) {
 	stateSnapshot := &kafka.StateSnapshot{
 		Timestamp: now.Unix(),
 		Version:   1,
-		Topics: map[string]map[int32]kafka.PartitionState{
-			"topic-a": {0: {Partition: 0, Offset: 100, Timestamp: now.Unix()}},
-			"topic-b": {0: {Partition: 0, Offset: 200, Timestamp: now.Unix()}},
+		Topics: map[string]*kafka.TopicState{
+			"topic-a": {
+				Version:   1,
+				Topic:     "topic-a",
+				Timestamp: now.Unix(),
+				Partitions: map[int32]kafka.PartitionState{
+					0: {Partition: 0, Offset: 100, Timestamp: now.Unix()},
+				},
+			},
+			"topic-b": {
+				Version:   1,
+				Topic:     "topic-b",
+				Timestamp: now.Unix(),
+				Partitions: map[int32]kafka.PartitionState{
+					0: {Partition: 0, Offset: 200, Timestamp: now.Unix()},
+				},
+			},
 		},
 		Instances: map[string]kafka.HeartbeatRecord{},
 	}
@@ -207,8 +221,15 @@ func TestSyncGlobalFromStateReplacesPreviousTopics(t *testing.T) {
 	initial := &kafka.StateSnapshot{
 		Timestamp: now.Unix(),
 		Version:   1,
-		Topics: map[string]map[int32]kafka.PartitionState{
-			"topic-old": {0: {Partition: 0, Offset: 10, Timestamp: now.Unix()}},
+		Topics: map[string]*kafka.TopicState{
+			"topic-old": {
+				Version:   1,
+				Topic:     "topic-old",
+				Timestamp: now.Unix(),
+				Partitions: map[int32]kafka.PartitionState{
+					0: {Partition: 0, Offset: 10, Timestamp: now.Unix()},
+				},
+			},
 		},
 		Instances: map[string]kafka.HeartbeatRecord{},
 	}
@@ -217,8 +238,15 @@ func TestSyncGlobalFromStateReplacesPreviousTopics(t *testing.T) {
 	replayed := &kafka.StateSnapshot{
 		Timestamp: now.Add(time.Minute).Unix(),
 		Version:   1,
-		Topics: map[string]map[int32]kafka.PartitionState{
-			"topic-new": {0: {Partition: 0, Offset: 20, Timestamp: now.Add(time.Minute).Unix()}},
+		Topics: map[string]*kafka.TopicState{
+			"topic-new": {
+				Version:   1,
+				Topic:     "topic-new",
+				Timestamp: now.Add(time.Minute).Unix(),
+				Partitions: map[int32]kafka.PartitionState{
+					0: {Partition: 0, Offset: 20, Timestamp: now.Add(time.Minute).Unix()},
+				},
+			},
 		},
 		Instances: map[string]kafka.HeartbeatRecord{},
 	}
@@ -336,7 +364,7 @@ func TestSyncInstancesFromStateLoadsGroupIDAndShards(t *testing.T) {
 	stateSnapshot := &kafka.StateSnapshot{
 		Timestamp: now.Unix(),
 		Version:   1,
-		Topics:    map[string]map[int32]kafka.PartitionState{},
+		Topics:    map[string]*kafka.TopicState{},
 		Instances: map[string]kafka.HeartbeatRecord{
 			"inst-2": {
 				Version:              1,

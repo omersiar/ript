@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/omersiar/ript/internal/config"
+	"github.com/omersiar/ript/internal/models"
 )
 
 func testServer() *Server {
@@ -258,6 +259,59 @@ func TestStaticFilesDirIsConfigurable(t *testing.T) {
 	}
 	if strings.TrimSpace(assetResp.Body.String()) != "custom-asset" {
 		t.Fatalf("expected asset body custom-asset, got %q", assetResp.Body.String())
+	}
+}
+
+func TestParseIgnoredFilter(t *testing.T) {
+	tests := []struct {
+		name        string
+		query       string
+		ignored     bool
+		wantInclude bool
+	}{
+		{name: "default false", query: "", ignored: false, wantInclude: true},
+		{name: "default false hides ignored", query: "", ignored: true, wantInclude: false},
+		{name: "true includes ignored", query: "ignored=true", ignored: true, wantInclude: true},
+		{name: "true hides non ignored", query: "ignored=true", ignored: false, wantInclude: false},
+		{name: "all includes ignored", query: "ignored=all", ignored: true, wantInclude: true},
+		{name: "all includes non ignored", query: "ignored=all", ignored: false, wantInclude: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest("GET", "/api/topics?"+tt.query, nil)
+
+			filter := parseIgnoredFilter(ctx)
+			got := filter(&topicResponse{Ignored: tt.ignored})
+			if got != tt.wantInclude {
+				t.Fatalf("unexpected filter result: got %v want %v", got, tt.wantInclude)
+			}
+		})
+	}
+}
+
+func TestBuildTopicResponseIncludesIgnored(t *testing.T) {
+	partition := &models.PartitionInfo{Partition: 0, Offset: 10, Timestamp: daysAgo(1)}
+	topic := &models.TopicStatus{
+		Name:               "topic-a",
+		PartitionCount:     1,
+		Partitions:         map[int32]*models.PartitionInfo{0: partition},
+		OldestPartitionAge: models.Duration{Days: 1},
+		NewestPartitionAge: models.Duration{Days: 1},
+		LastUpdate:         daysAgo(1),
+		IsEmpty:            false,
+		TotalMessageCount:  10,
+		Ignored:            true,
+	}
+
+	resp := buildTopicResponse(topic)
+	if !resp.Ignored {
+		t.Fatal("expected ignored flag to be preserved in API response")
+	}
+	if resp.Name != topic.Name || resp.PartitionCount != topic.PartitionCount {
+		t.Fatalf("unexpected response mapping: %+v", resp)
 	}
 }
 

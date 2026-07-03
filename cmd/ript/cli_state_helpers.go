@@ -75,14 +75,29 @@ func loadTopicStatusesFromState(ctx context.Context, state *kafka.StateManager) 
 	return tracker.BuildTopicStatusesFromSnapshot(snapshot), nil
 }
 
-func filterAndSortTopics(topics map[string]*models.TopicStatus, prefix string, search string, regexMode bool, unusedDays int, emptyOnly bool) ([]*models.TopicStatus, error) {
+func filterAndSortTopics(topics map[string]*models.TopicStatus, prefix string, search string, regexMode bool, unusedDays int, emptyOnly bool, ignoredFilter string) ([]*models.TopicStatus, error) {
 	matcher, err := newTopicMatcher(prefix, search, regexMode)
 	if err != nil {
 		return nil, err
 	}
 
+	// Validate ignored filter value
+	ignoredFilter = strings.ToLower(strings.TrimSpace(ignoredFilter))
+	if ignoredFilter != "true" && ignoredFilter != "false" && ignoredFilter != "all" {
+		return nil, fmt.Errorf("invalid --ignored value %q: must be true, false, or all", ignoredFilter)
+	}
+
 	filtered := make([]*models.TopicStatus, 0, len(topics))
 	for _, topic := range topics {
+		// Apply ignored filter
+		if ignoredFilter == "true" && !topic.Ignored {
+			continue
+		}
+		if ignoredFilter == "false" && topic.Ignored {
+			continue
+		}
+		// ignoredFilter == "all" passes all topics through
+
 		if emptyOnly {
 			if !topic.IsEmpty {
 				continue

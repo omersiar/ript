@@ -39,19 +39,26 @@ if ! command -v curl &> /dev/null; then
     exit 1
 fi
 
-# Read HTTP_PORT from .env if present, default to 8080
-HTTP_PORT=8080
-if [ -f "$SCRIPT_DIR/.env" ]; then
+# Discover the published host port for the RIPT service from Docker Compose.
+# Fall back to .env or 8080 if the mapping cannot be resolved.
+HTTP_PORT=""
+if docker compose port ript 8080 >/dev/null 2>&1; then
+    HTTP_PORT=$(docker compose port ript 8080 | awk -F: 'NF{print $NF; exit}')
+fi
+if [ -z "$HTTP_PORT" ] && [ -f "$SCRIPT_DIR/.env" ]; then
     _port=$(grep -E '^RIPT_HTTP_PORT=' "$SCRIPT_DIR/.env" | cut -d'=' -f2 | tr -d '[:space:]')
     if [ -n "$_port" ]; then
         HTTP_PORT="$_port"
     fi
 fi
+if [ -z "$HTTP_PORT" ]; then
+    HTTP_PORT=8080
+fi
 TRACKER_BASE="http://localhost:${HTTP_PORT}"
 log_info "Using RIPT port: $HTTP_PORT"
 
 log_info "Starting Docker Compose stack..."
-docker compose up -d
+docker compose up -d --build
 
 log_info "Waiting for Kafka to be ready..."
 KAFKA_READY=false
@@ -131,6 +138,67 @@ if echo "$TOPIC_DETAIL" | grep -q '"name":"test-active"'; then
     log_info "✓ Retrieved test-active topic details"
 else
     log_error "✗ Failed to get test-active topic"
+    exit 1
+fi
+
+# Test 3b: Ignore/unignore workflow persists and affects filtering
+log_info "Test 3b: Ignore/unignore workflow..."
+IGNORE_RESP=$(curl -s -X PUT -H 'Content-Type: application/json' -d '{"ignored":true}' "${TRACKER_BASE}/api/topics/test-inactive/ignored")
+if echo "$IGNORE_RESP" | grep -q '"ignored":true'; then
+    log_info "✓ Marked test-inactive as ignored"
+else
+    log_error "✗ Failed to mark test-inactive as ignored"
+    exit 1
+fi
+
+DEFAULT_FILTER=$(curl -s "${TRACKER_BASE}/api/topics?search=test-inactive")
+if echo "$DEFAULT_FILTER" | grep -q '"count":0'; then
+    log_info "✓ Ignored topic hidden from default topic list"
+else
+    log_error "✗ Ignored topic should be hidden from default topic list"
+    exit 1
+fi
+
+ALL_FILTER=$(curl -s "${TRACKER_BASE}/api/topics?ignored=all&search=test-inactive")
+if echo "$ALL_FILTER" | grep -q '"count":1'; then
+    log_info "✓ Ignored topic visible with ignored=all"
+else
+    log_error "✗ Ignored topic should be visible with ignored=all"
+    exit 1
+fi
+
+log_info "Restarting RIPT to verify ignored state is persisted..."
+docker compose restart ript
+
+log_info "Waiting for RIPT API to be ready after restart..."
+TRACKER_READY=false
+for i in {1..30}; do
+    if curl -s "${TRACKER_BASE}/api/health" > /dev/null 2>&1; then
+        log_info "RIPT API is ready after restart!"
+        TRACKER_READY=true
+        break
+    fi
+    sleep 2
+done
+
+if [ "$TRACKER_READY" = "false" ]; then
+    log_error "RIPT API did not become ready after restart"
+    exit 1
+fi
+
+PERSISTED_DETAIL=$(curl -s "${TRACKER_BASE}/api/topics/test-inactive")
+if echo "$PERSISTED_DETAIL" | grep -q '"ignored":true'; then
+    log_info "✓ Ignored state persisted across restart"
+else
+    log_error "✗ Ignored state did not persist across restart"
+    exit 1
+fi
+
+UNIGNORE_RESP=$(curl -s -X PUT -H 'Content-Type: application/json' -d '{"ignored":false}' "${TRACKER_BASE}/api/topics/test-inactive/ignored")
+if echo "$UNIGNORE_RESP" | grep -q '"ignored":false'; then
+    log_info "✓ Cleared ignored state for test-inactive"
+else
+    log_error "✗ Failed to clear ignored state for test-inactive"
     exit 1
 fi
 

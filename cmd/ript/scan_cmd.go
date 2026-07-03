@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/omersiar/ript/internal/logging"
@@ -17,6 +18,7 @@ type scanOptions struct {
 	prefix     string
 	search     string
 	regex      bool
+	ignoredOnly string
 	output     string
 	staleDays  int
 	unusedDays int
@@ -41,6 +43,7 @@ are always written to state.`,
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "Filter summary output to topics with this prefix")
 	cmd.Flags().StringVar(&opts.search, "search", "", "Filter summary output by substring or regex")
 	cmd.Flags().BoolVar(&opts.regex, "regex", false, "Interpret --search as regex")
+	cmd.Flags().StringVar(&opts.ignoredOnly, "ignored", "false", "Filter summary by ignored status: true|false|all (default: false - show non-ignored)")
 	cmd.Flags().StringVar(&opts.output, "output", outputTable, "Output format: table|json")
 	cmd.Flags().IntVar(&opts.staleDays, "stale-days", 7, "Partition stale threshold in days (for summary)")
 	cmd.Flags().IntVar(&opts.unusedDays, "unused-days", 30, "Topic unused threshold in days (for summary)")
@@ -92,8 +95,22 @@ func runScan(ctx context.Context, opts *scanOptions) error {
 }
 
 func printScanSummary(topics map[string]*models.TopicStatus, matcher func(string) bool, opts *scanOptions) error {
+	ignoredFilter := strings.ToLower(strings.TrimSpace(opts.ignoredOnly))
+	if ignoredFilter != "true" && ignoredFilter != "false" && ignoredFilter != "all" {
+		return fmt.Errorf("invalid --ignored value %q: must be true, false, or all", ignoredFilter)
+	}
+
 	matched := make([]*models.TopicStatus, 0, len(topics))
 	for _, topic := range topics {
+		// Apply ignored filter
+		if ignoredFilter == "true" && !topic.Ignored {
+			continue
+		}
+		if ignoredFilter == "false" && topic.Ignored {
+			continue
+		}
+		// ignoredFilter == "all" passes all topics through
+
 		if matcher(topic.Name) {
 			matched = append(matched, topic)
 		}
