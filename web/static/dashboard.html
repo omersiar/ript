@@ -709,6 +709,7 @@
                                 <path d="M10 6.25c-.414 0-.75.336-.75.75v5c0 .414.336.75.75.75h3.5c.414 0 .75-.336.75-.75V7c0-.414-.336-.75-.75-.75H10ZM8.25 7A1.75 1.75 0 0 1 10 5.25h3.5A1.75 1.75 0 0 1 15.25 7v5a1.75 1.75 0 0 1-1.75 1.75H10A1.75 1.75 0 0 1 8.25 12V7Z"></path>
                             </svg>
                         </button>
+                        <span class="badge badge-status badge-ignored" id="topicModalIgnoredBadge" style="display:none;">Ignored</span>
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -1483,10 +1484,12 @@
             const ignoreBtn = document.getElementById('topicIgnoreToggleBtn');
             const modalTitle = document.getElementById('topicModalTitleText');
             const modalCopyBtn = document.getElementById('topicModalCopyBtn');
+            const ignoredBadge = document.getElementById('topicModalIgnoredBadge');
 
             modalTitle.textContent = `Topic: ${topicName}`;
             modalCopyBtn.style.display = '';
             modalCopyBtn.setAttribute('data-copy-value', topicName);
+            ignoredBadge.style.display = details.ignored ? '' : 'none';
 
             meta.textContent = `Partitions: ${details.partition_count} | Oldest age: ${formatAge(details.oldest_timestamp)} | Last update: ${formatRelativeTime(details.last_update)} | Ignored: ${details.ignored ? 'yes' : 'no'}`;
             ignoreBtn.style.display = '';
@@ -1529,10 +1532,12 @@
             document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6" class="loading">Loading partition details...</td></tr>';
             const ignoreBtn = document.getElementById('topicIgnoreToggleBtn');
             const modalCopyBtn = document.getElementById('topicModalCopyBtn');
+            const ignoredBadge = document.getElementById('topicModalIgnoredBadge');
             ignoreBtn.style.display = 'none';
             ignoreBtn.disabled = true;
             modalCopyBtn.style.display = '';
             modalCopyBtn.setAttribute('data-copy-value', topicName);
+            ignoredBadge.style.display = 'none';
 
             try {
                 const response = await fetch(`${API_BASE}/topics/${encodeURIComponent(topicName)}`);
@@ -1546,6 +1551,7 @@
                 document.getElementById('topicDetailsMeta').textContent = 'Failed to load topic details.';
                 document.getElementById('topicDetailsTableBody').innerHTML = '<tr><td colspan="6" class="loading">Unable to load partition details.</td></tr>';
                 ignoreBtn.style.display = 'none';
+                ignoredBadge.style.display = 'none';
             }
         }
 
