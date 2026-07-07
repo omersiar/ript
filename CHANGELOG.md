@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ability to ignore/unignore topic(s)
 - full url generation for sharing the dashboard with all the states
 - copy to clipboard helper
+- discovery time of the topics
 
 ## v0.3.3 - 2026-06-19
 
