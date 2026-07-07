@@ -13,6 +13,7 @@ type TopicStatus struct {
 	OldestPartitionAge Duration                 `json:"oldest_partition_age"`
 	NewestPartitionAge Duration                 `json:"newest_partition_age"`
 	LastUpdate         int64                    `json:"last_update"`
+	DiscoveryTime      int64                    `json:"discovery_time"`
 	IsEmpty            bool                     `json:"is_empty"`
 	TotalMessageCount  int64                    `json:"total_message_count"`
 	Ignored            bool                     `json:"ignored"`

@@ -91,6 +91,7 @@ type listJSONItem struct {
 	Status            string          `json:"status"`
 	IsEmpty           bool            `json:"is_empty"`
 	PartitionCount    int32           `json:"partition_count"`
+	DiscoveryTimeUnix int64           `json:"discovery_time_unix"`
 	OldestPartition   string          `json:"oldest_partition_age"`
 	NewestPartition   string          `json:"newest_partition_age"`
 	StalePartitions   int             `json:"stale_partitions"`
@@ -115,6 +116,7 @@ func printListJSON(topics []*models.TopicStatus, opts *listOptions) error {
 			Status:            classifyTopicStatus(topic, opts.staleDays, opts.unusedDays),
 			IsEmpty:           topic.IsEmpty,
 			PartitionCount:    topic.PartitionCount,
+			DiscoveryTimeUnix: topic.DiscoveryTime,
 			OldestPartition:   topic.OldestPartitionAge.String(),
 			NewestPartition:   topic.NewestPartitionAge.String(),
 			StalePartitions:   len(stalePartitions),
@@ -152,30 +154,38 @@ func printListJSON(topics []*models.TopicStatus, opts *listOptions) error {
 
 func printListTable(topics []*models.TopicStatus, opts *listOptions) {
 	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "TOPIC\tSTATUS\tEMPTY\tPARTITIONS\tSTALE_PARTITIONS\tMESSAGES\tOLDEST_AGE\tNEWEST_AGE")
+	fmt.Fprintln(w, "TOPIC\tSTATUS\tEMPTY\tPARTITIONS\tSTALE_PARTITIONS\tMESSAGES\tDISCOVERED\tOLDEST_AGE\tNEWEST_AGE")
 	for _, topic := range topics {
 		stalePartitions := collectStalePartitions(topic, opts.staleDays)
 		emptyVal := "no"
 		if topic.IsEmpty {
 			emptyVal = "yes"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
 			topic.Name,
 			classifyTopicStatus(topic, opts.staleDays, opts.unusedDays),
 			emptyVal,
 			topic.PartitionCount,
 			len(stalePartitions),
 			topic.TotalMessageCount,
+			formatDiscoveryAge(topic.DiscoveryTime),
 			topic.OldestPartitionAge.String(),
 			topic.NewestPartitionAge.String(),
 		)
 		if opts.includeStalePartitions {
 			for _, part := range stalePartitions {
-				fmt.Fprintf(w, "  - p%d\t\t\t\t\t\t%s (offset=%d)\n", part.Partition, part.Age.String(), part.Offset)
+				fmt.Fprintf(w, "  - p%d\t\t\t\t\t\t\t%s (offset=%d)\n", part.Partition, part.Age.String(), part.Offset)
 			}
 		}
 	}
 	w.Flush()
+}
+
+func formatDiscoveryAge(discoveryTime int64) string {
+	if discoveryTime <= 0 {
+		return "-"
+	}
+	return models.CalculateDuration(time.Unix(discoveryTime, 0).UTC()).String()
 }
 
 func collectStalePartitions(topic *models.TopicStatus, staleDays int) []*models.PartitionInfo {

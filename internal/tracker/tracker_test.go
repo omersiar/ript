@@ -84,10 +84,11 @@ func newTestTracker(instanceID string) *TopicTracker {
 func mustMarshalTopicState(t *testing.T, topic string, ts time.Time, partitions map[int32]kafka.PartitionState) []byte {
 	t.Helper()
 	state := kafka.TopicState{
-		Version:    1,
-		Topic:      topic,
-		Timestamp:  ts.Unix(),
-		Partitions: partitions,
+		Version:       1,
+		Topic:         topic,
+		Timestamp:     ts.Unix(),
+		DiscoveryTime: ts.Unix(),
+		Partitions:    partitions,
 	}
 	b, err := json.Marshal(state)
 	if err != nil {
@@ -113,6 +114,9 @@ func TestApplyGlobalRecordAddsOrUpdatesTopic(t *testing.T) {
 	}
 	if topic.PartitionCount != 1 {
 		t.Errorf("expected PartitionCount=1, got %d", topic.PartitionCount)
+	}
+	if topic.DiscoveryTime != now.Unix() {
+		t.Errorf("expected DiscoveryTime=%d, got %d", now.Unix(), topic.DiscoveryTime)
 	}
 	if topic.Partitions[0].Offset != 42 {
 		t.Errorf("expected partition 0 offset=42, got %d", topic.Partitions[0].Offset)
@@ -178,9 +182,10 @@ func TestSyncGlobalFromStatePopulatesSnapshot(t *testing.T) {
 		Version:   1,
 		Topics: map[string]*kafka.TopicState{
 			"topic-a": {
-				Version:   1,
-				Topic:     "topic-a",
-				Timestamp: now.Unix(),
+				Version:       1,
+				Topic:         "topic-a",
+				Timestamp:     now.Unix(),
+				DiscoveryTime: now.Add(-48 * time.Hour).Unix(),
 				Partitions: map[int32]kafka.PartitionState{
 					0: {Partition: 0, Offset: 100, Timestamp: now.Unix()},
 				},
@@ -208,6 +213,9 @@ func TestSyncGlobalFromStatePopulatesSnapshot(t *testing.T) {
 	}
 	if _, ok := snapshot.Topics["topic-a"]; !ok {
 		t.Error("expected 'topic-a' in global snapshot")
+	}
+	if got, want := snapshot.Topics["topic-a"].DiscoveryTime, now.Add(-48*time.Hour).Unix(); got != want {
+		t.Errorf("expected topic-a DiscoveryTime=%d, got %d", want, got)
 	}
 	if _, ok := snapshot.Topics["topic-b"]; !ok {
 		t.Error("expected 'topic-b' in global snapshot")
@@ -496,6 +504,30 @@ func TestMergeGlobalTopicRecordRecalculatesPartitionCount(t *testing.T) {
 
 	if int(merged.PartitionCount) != len(merged.Partitions) {
 		t.Errorf("PartitionCount=%d but len(Partitions)=%d; should match", merged.PartitionCount, len(merged.Partitions))
+	}
+}
+
+func TestMergeGlobalTopicRecordKeepsEarliestDiscoveryTime(t *testing.T) {
+	now := time.Date(2026, time.March, 30, 10, 0, 0, 0, time.UTC)
+	existing := &models.TopicStatus{
+		Name:          "topic-x",
+		DiscoveryTime: now.Add(-2 * time.Hour).Unix(),
+		Partitions: map[int32]*models.PartitionInfo{
+			0: {Partition: 0, Offset: 10, Timestamp: now.Unix()},
+		},
+	}
+	incoming := &models.TopicStatus{
+		Name:          "topic-x",
+		DiscoveryTime: now.Unix(),
+		Partitions: map[int32]*models.PartitionInfo{
+			1: {Partition: 1, Offset: 20, Timestamp: now.Unix()},
+		},
+	}
+
+	merged := mergeGlobalTopicRecord(existing, incoming)
+
+	if got, want := merged.DiscoveryTime, existing.DiscoveryTime; got != want {
+		t.Fatalf("expected merged DiscoveryTime=%d, got %d", want, got)
 	}
 }
 

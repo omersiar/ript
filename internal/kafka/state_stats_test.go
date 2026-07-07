@@ -18,10 +18,11 @@ func TestApplyRecordToSnapshotCountsDuplicateAndTombstone(t *testing.T) {
 	start := time.Now()
 
 	state := TopicState{
-		Version:    1,
-		Topic:      "orders",
-		Timestamp:  time.Now().UTC().Unix(),
-		Partitions: map[int32]PartitionState{0: {Partition: 0, Offset: 10, Timestamp: time.Now().UTC().Unix()}},
+		Version:       1,
+		Topic:         "orders",
+		Timestamp:     time.Now().UTC().Unix(),
+		DiscoveryTime: time.Now().UTC().Add(-24 * time.Hour).Unix(),
+		Partitions:    map[int32]PartitionState{0: {Partition: 0, Offset: 10, Timestamp: time.Now().UTC().Unix()}},
 	}
 	stateBytes, err := json.Marshal(state)
 	if err != nil {
@@ -29,6 +30,9 @@ func TestApplyRecordToSnapshotCountsDuplicateAndTombstone(t *testing.T) {
 	}
 
 	applyRecordToSnapshot(snapshot, stats, seenKeys, &kgo.Record{Key: []byte("orders"), Value: stateBytes})
+	if got, want := snapshot.Topics["orders"].DiscoveryTime, state.DiscoveryTime; got != want {
+		t.Fatalf("DiscoveryTime=%d, want %d", got, want)
+	}
 	applyRecordToSnapshot(snapshot, stats, seenKeys, &kgo.Record{Key: []byte("orders"), Value: stateBytes})
 	applyRecordToSnapshot(snapshot, stats, seenKeys, &kgo.Record{Key: []byte("orders"), Value: nil})
 	finalizeStateLoadStats(snapshot, stats, seenKeys, start)

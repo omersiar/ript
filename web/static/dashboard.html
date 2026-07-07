@@ -1491,7 +1491,7 @@
             modalCopyBtn.setAttribute('data-copy-value', topicName);
             ignoredBadge.style.display = details.ignored ? '' : 'none';
 
-            meta.textContent = `Partitions: ${details.partition_count} | Oldest age: ${formatAge(details.oldest_timestamp)} | Last update: ${formatRelativeTime(details.last_update)} | Ignored: ${details.ignored ? 'yes' : 'no'}`;
+            meta.textContent = `Partitions: ${details.partition_count} | Discovered: ${formatRelativeTime(details.discovery_time)} | Oldest age: ${formatAge(details.oldest_timestamp)} | Last update: ${formatRelativeTime(details.last_update)} | Ignored: ${details.ignored ? 'yes' : 'no'}`;
             ignoreBtn.style.display = '';
             ignoreBtn.disabled = false;
             ignoreBtn.setAttribute('data-topic-name', topicName);

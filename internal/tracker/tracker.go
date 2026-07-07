@@ -410,6 +410,7 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 			PartitionCount: int32(len(meta.partitions)),
 			Partitions:     make(map[int32]*models.PartitionInfo),
 			LastUpdate:     scanTime,
+			DiscoveryTime:  scanTime,
 		}
 
 		// Preserve the Ignored flag from the previous snapshot to ensure that
@@ -417,6 +418,9 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 		if previousTopic, ok := previousGlobalSnapshot.Topics[meta.name]; ok {
 			topicStatus.Ignored = previousTopic.Ignored
 			topicStatus.IgnoredAt = previousTopic.IgnoredAt
+			if previousTopic.DiscoveryTime > 0 {
+				topicStatus.DiscoveryTime = previousTopic.DiscoveryTime
+			}
 		}
 
 		var oldestTimestamp int64
@@ -621,11 +625,12 @@ func (t *TopicTracker) startGlobalConsumerLoop(ctx context.Context, resumeOffset
 // Used both for the initial state load and for incremental global consumer updates.
 func buildTopicStatusFromState(state *kafka.TopicState) *models.TopicStatus {
 	topicStatus := &models.TopicStatus{
-		Name:       state.Topic,
-		Partitions: make(map[int32]*models.PartitionInfo, len(state.Partitions)),
-		LastUpdate: state.Timestamp,
-		Ignored:    state.Ignored,
-		IgnoredAt:  state.IgnoredAt,
+		Name:          state.Topic,
+		Partitions:    make(map[int32]*models.PartitionInfo, len(state.Partitions)),
+		LastUpdate:    state.Timestamp,
+		DiscoveryTime: state.DiscoveryTime,
+		Ignored:       state.Ignored,
+		IgnoredAt:     state.IgnoredAt,
 	}
 
 	var oldestTimestamp int64
@@ -686,11 +691,12 @@ func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.Topi
 	}
 
 	merged := &models.TopicStatus{
-		Name:       incoming.Name,
-		LastUpdate: incoming.LastUpdate,
-		Ignored:    incoming.Ignored,
-		IgnoredAt:  incoming.IgnoredAt,
-		Partitions: make(map[int32]*models.PartitionInfo, len(incoming.Partitions)+len(existing.Partitions)),
+		Name:          incoming.Name,
+		LastUpdate:    incoming.LastUpdate,
+		DiscoveryTime: mergeTopicDiscoveryTime(existing.DiscoveryTime, incoming.DiscoveryTime),
+		Ignored:       incoming.Ignored,
+		IgnoredAt:     incoming.IgnoredAt,
+		Partitions:    make(map[int32]*models.PartitionInfo, len(incoming.Partitions)+len(existing.Partitions)),
 	}
 
 	for partID, incomingPart := range incoming.Partitions {
@@ -744,6 +750,19 @@ func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.Topi
 	}
 
 	return merged
+}
+
+func mergeTopicDiscoveryTime(existing, incoming int64) int64 {
+	switch {
+	case existing == 0:
+		return incoming
+	case incoming == 0:
+		return existing
+	case incoming < existing:
+		return incoming
+	default:
+		return existing
+	}
 }
 
 func (t *TopicTracker) syncInstancesFromState(snapshot *kafka.StateSnapshot) {

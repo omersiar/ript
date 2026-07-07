@@ -41,6 +41,7 @@ type pagination struct {
 
 type topicResponse struct {
 	Name                     string `json:"name"`
+	DiscoveryTime            int64  `json:"discovery_time"`
 	PartitionCount           int32  `json:"partition_count"`
 	OldestPartitionTimestamp int64  `json:"oldest_partition_timestamp"`
 	NewestPartitionTimestamp int64  `json:"newest_partition_timestamp"`
@@ -206,6 +207,7 @@ func (s *Server) handleGetTopic(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"name":             topic.Name,
+		"discovery_time":   topic.DiscoveryTime,
 		"partition_count":  topic.PartitionCount,
 		"partitions":       partitions,
 		"oldest_timestamp": oldestTS,
@@ -488,6 +490,7 @@ func buildTopicResponse(topic *models.TopicStatus) topicResponse {
 	}
 	return topicResponse{
 		Name:                     topic.Name,
+		DiscoveryTime:            topic.DiscoveryTime,
 		PartitionCount:           topic.PartitionCount,
 		OldestPartitionTimestamp: oldestTS,
 		NewestPartitionTimestamp: newestTS,

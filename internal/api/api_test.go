@@ -301,6 +301,7 @@ func TestBuildTopicResponseIncludesIgnored(t *testing.T) {
 		OldestPartitionAge: models.Duration{Days: 1},
 		NewestPartitionAge: models.Duration{Days: 1},
 		LastUpdate:         daysAgo(1),
+		DiscoveryTime:      daysAgo(30),
 		IsEmpty:            false,
 		TotalMessageCount:  10,
 		Ignored:            true,
@@ -309,6 +310,9 @@ func TestBuildTopicResponseIncludesIgnored(t *testing.T) {
 	resp := buildTopicResponse(topic)
 	if !resp.Ignored {
 		t.Fatal("expected ignored flag to be preserved in API response")
+	}
+	if resp.DiscoveryTime != topic.DiscoveryTime {
+		t.Fatalf("expected discovery time %d, got %d", topic.DiscoveryTime, resp.DiscoveryTime)
 	}
 	if resp.Name != topic.Name || resp.PartitionCount != topic.PartitionCount {
 		t.Fatalf("unexpected response mapping: %+v", resp)

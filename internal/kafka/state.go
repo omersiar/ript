@@ -105,12 +105,13 @@ type StateSnapshot struct {
 // is written as one Kafka message (key = topic name) to the compacted tracker
 // topic, allowing Kafka log compaction to retain only the latest state per topic.
 type TopicState struct {
-	Version    int                      `json:"version"`
-	Topic      string                   `json:"topic"`
-	Timestamp  int64                    `json:"timestamp"`
-	Partitions map[int32]PartitionState `json:"partitions"`
-	Ignored    bool                     `json:"ignored"`
-	IgnoredAt  *int64                   `json:"ignored_at,omitempty"`
+	Version       int                      `json:"version"`
+	Topic         string                   `json:"topic"`
+	Timestamp     int64                    `json:"timestamp"`
+	DiscoveryTime int64                    `json:"discovery_time"`
+	Partitions    map[int32]PartitionState `json:"partitions"`
+	Ignored       bool                     `json:"ignored"`
+	IgnoredAt     *int64                   `json:"ignored_at,omitempty"`
 }
 
 // PartitionState is the persisted offset and timestamp for a single partition.
@@ -267,12 +268,13 @@ func (sm *StateManager) SaveSnapshot(ctx context.Context, snapshot *models.Clust
 	records := make([]*kgo.Record, 0, len(snapshot.Topics))
 	for topicName, topicStatus := range snapshot.Topics {
 		state := &TopicState{
-			Version:    1,
-			Topic:      topicName,
-			Timestamp:  time.Now().UTC().Unix(),
-			Partitions: make(map[int32]PartitionState, len(topicStatus.Partitions)),
-			Ignored:    topicStatus.Ignored,
-			IgnoredAt:  topicStatus.IgnoredAt,
+			Version:       1,
+			Topic:         topicName,
+			Timestamp:     time.Now().UTC().Unix(),
+			DiscoveryTime: topicStatus.DiscoveryTime,
+			Partitions:    make(map[int32]PartitionState, len(topicStatus.Partitions)),
+			Ignored:       topicStatus.Ignored,
+			IgnoredAt:     topicStatus.IgnoredAt,
 		}
 		for partID, partInfo := range topicStatus.Partitions {
 			state.Partitions[partID] = PartitionState{
@@ -319,12 +321,13 @@ func (sm *StateManager) SaveSnapshot(ctx context.Context, snapshot *models.Clust
 // bulk updates; this is available for incremental single-topic saves.
 func (sm *StateManager) SaveTopicState(ctx context.Context, topicName string, topicStatus *models.TopicStatus) error {
 	state := &TopicState{
-		Version:    1,
-		Topic:      topicName,
-		Timestamp:  time.Now().UTC().Unix(),
-		Partitions: make(map[int32]PartitionState, len(topicStatus.Partitions)),
-		Ignored:    topicStatus.Ignored,
-		IgnoredAt:  topicStatus.IgnoredAt,
+		Version:       1,
+		Topic:         topicName,
+		Timestamp:     time.Now().UTC().Unix(),
+		DiscoveryTime: topicStatus.DiscoveryTime,
+		Partitions:    make(map[int32]PartitionState, len(topicStatus.Partitions)),
+		Ignored:       topicStatus.Ignored,
+		IgnoredAt:     topicStatus.IgnoredAt,
 	}
 	for partID, partInfo := range topicStatus.Partitions {
 		state.Partitions[partID] = PartitionState{
