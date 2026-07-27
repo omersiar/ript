@@ -6,6 +6,28 @@ import (
 	"time"
 )
 
+// RetentionPolicy holds the topic's cleanup.policy value and when it was last
+// fetched from the broker. FetchedAt is a Unix timestamp (seconds).
+type RetentionPolicy struct {
+	CleanupPolicy string `json:"cleanup_policy"`
+	FetchedAt     int64  `json:"fetched_at"`
+}
+
+// IsCompacted reports whether the topic has log-compaction enabled.
+// Returns true for "compact" and "delete,compact" (any order, case-insensitive).
+// A nil receiver returns false.
+func (r *RetentionPolicy) IsCompacted() bool {
+	if r == nil {
+		return false
+	}
+	for _, token := range strings.Split(r.CleanupPolicy, ",") {
+		if strings.EqualFold(strings.TrimSpace(token), "compact") {
+			return true
+		}
+	}
+	return false
+}
+
 type TopicStatus struct {
 	Name               string                   `json:"name"`
 	PartitionCount     int32                    `json:"partition_count"`
@@ -18,6 +40,7 @@ type TopicStatus struct {
 	TotalMessageCount  int64                    `json:"total_message_count"`
 	Ignored            bool                     `json:"ignored"`
 	IgnoredAt          *int64                   `json:"ignored_at,omitempty"`
+	RetentionPolicy    *RetentionPolicy         `json:"retention_policy,omitempty"`
 }
 
 type PartitionInfo struct {

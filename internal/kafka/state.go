@@ -101,17 +101,24 @@ type StateSnapshot struct {
 	Instances map[string]HeartbeatRecord
 }
 
+// RetentionPolicyState is the persisted retention policy for a topic.
+type RetentionPolicyState struct {
+	CleanupPolicy string `json:"cleanup_policy"`
+	FetchedAt     int64  `json:"fetched_at"`
+}
+
 // TopicState is the persisted representation of a single topic. Each instance
 // is written as one Kafka message (key = topic name) to the compacted tracker
 // topic, allowing Kafka log compaction to retain only the latest state per topic.
 type TopicState struct {
-	Version       int                      `json:"version"`
-	Topic         string                   `json:"topic"`
-	Timestamp     int64                    `json:"timestamp"`
-	DiscoveryTime int64                    `json:"discovery_time"`
-	Partitions    map[int32]PartitionState `json:"partitions"`
-	Ignored       bool                     `json:"ignored"`
-	IgnoredAt     *int64                   `json:"ignored_at,omitempty"`
+	Version         int                      `json:"version"`
+	Topic           string                   `json:"topic"`
+	Timestamp       int64                    `json:"timestamp"`
+	DiscoveryTime   int64                    `json:"discovery_time"`
+	Partitions      map[int32]PartitionState `json:"partitions"`
+	Ignored         bool                     `json:"ignored"`
+	IgnoredAt       *int64                   `json:"ignored_at,omitempty"`
+	RetentionPolicy *RetentionPolicyState    `json:"retention_policy,omitempty"`
 }
 
 // PartitionState is the persisted offset and timestamp for a single partition.
@@ -276,6 +283,12 @@ func (sm *StateManager) SaveSnapshot(ctx context.Context, snapshot *models.Clust
 			Ignored:       topicStatus.Ignored,
 			IgnoredAt:     topicStatus.IgnoredAt,
 		}
+		if topicStatus.RetentionPolicy != nil {
+			state.RetentionPolicy = &RetentionPolicyState{
+				CleanupPolicy: topicStatus.RetentionPolicy.CleanupPolicy,
+				FetchedAt:     topicStatus.RetentionPolicy.FetchedAt,
+			}
+		}
 		for partID, partInfo := range topicStatus.Partitions {
 			state.Partitions[partID] = PartitionState{
 				Partition:    partID,
@@ -328,6 +341,12 @@ func (sm *StateManager) SaveTopicState(ctx context.Context, topicName string, to
 		Partitions:    make(map[int32]PartitionState, len(topicStatus.Partitions)),
 		Ignored:       topicStatus.Ignored,
 		IgnoredAt:     topicStatus.IgnoredAt,
+	}
+	if topicStatus.RetentionPolicy != nil {
+		state.RetentionPolicy = &RetentionPolicyState{
+			CleanupPolicy: topicStatus.RetentionPolicy.CleanupPolicy,
+			FetchedAt:     topicStatus.RetentionPolicy.FetchedAt,
+		}
 	}
 	for partID, partInfo := range topicStatus.Partitions {
 		state.Partitions[partID] = PartitionState{

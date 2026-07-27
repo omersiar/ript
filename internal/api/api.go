@@ -50,6 +50,7 @@ type topicResponse struct {
 	IsEmpty                  bool   `json:"is_empty"`
 	TotalMessageCount        int64  `json:"total_message_count"`
 	Ignored                  bool   `json:"ignored"`
+	CleanupPolicy            string `json:"cleanup_policy,omitempty"`
 }
 
 type thresholdValues struct {
@@ -206,15 +207,22 @@ func (s *Server) handleGetTopic(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"name":             topic.Name,
-		"discovery_time":   topic.DiscoveryTime,
-		"partition_count":  topic.PartitionCount,
-		"partitions":       partitions,
-		"oldest_timestamp": oldestTS,
-		"newest_timestamp": newestTS,
-		"last_update":      topic.LastUpdate,
-		"is_empty":         topic.IsEmpty,
-		"ignored":          topic.Ignored,
+		"name":               topic.Name,
+		"discovery_time":     topic.DiscoveryTime,
+		"partition_count":    topic.PartitionCount,
+		"partitions":         partitions,
+		"oldest_timestamp":   oldestTS,
+		"newest_timestamp":   newestTS,
+		"last_update":        topic.LastUpdate,
+		"is_empty":           topic.IsEmpty,
+		"ignored":            topic.Ignored,
+		"total_message_count": topic.TotalMessageCount,
+		"cleanup_policy":     func() string {
+			if topic.RetentionPolicy != nil {
+				return topic.RetentionPolicy.CleanupPolicy
+			}
+			return ""
+		}(),
 	})
 }
 
@@ -488,7 +496,7 @@ func buildTopicResponse(topic *models.TopicStatus) topicResponse {
 			hasEmptyPartitions = true
 		}
 	}
-	return topicResponse{
+	r := topicResponse{
 		Name:                     topic.Name,
 		DiscoveryTime:            topic.DiscoveryTime,
 		PartitionCount:           topic.PartitionCount,
@@ -499,6 +507,10 @@ func buildTopicResponse(topic *models.TopicStatus) topicResponse {
 		TotalMessageCount:        topic.TotalMessageCount,
 		Ignored:                  topic.Ignored,
 	}
+	if topic.RetentionPolicy != nil {
+		r.CleanupPolicy = topic.RetentionPolicy.CleanupPolicy
+	}
+	return r
 }
 
 func paginateTopicResponses(items []topicResponse, p pagination) ([]topicResponse, bool) {

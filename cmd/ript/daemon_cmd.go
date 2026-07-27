@@ -90,6 +90,7 @@ func runDaemon(parentCtx context.Context) error {
 		InstanceID:               cfg.InstanceID,
 		ConsumerGroupID:          cfg.TrackerConsumerGroupID,
 		InstanceHeartbeatSeconds: cfg.InstanceHeartbeatIntervalSeconds,
+		TopicConfigCacheTTLDays:  cfg.TopicConfigCacheTTLDays,
 	})
 
 	sigChan := make(chan os.Signal, 1)

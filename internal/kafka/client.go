@@ -340,7 +340,65 @@ func (c *Client) GetTopicConfigs(ctx context.Context, topic string, keys []strin
 	return configs, nil
 }
 
-// CreateTopicsIfNotExist issues one create-topics request for the provided
+// describeConfigsBatchSize is the maximum number of topics per DescribeConfigs
+// request. Kafka brokers handle up to hundreds of resources per request without
+// issue; 200 keeps individual requests reasonable on very large clusters.
+const describeConfigsBatchSize = 200
+
+// GetTopicConfigsBatch fetches cleanup.policy for the given topics using batched
+// DescribeConfigs requests. Topics are chunked into groups of describeConfigsBatchSize
+// so the broker is never overwhelmed on large clusters. Per-resource errors are
+// logged as warnings and those topics are omitted from the result (not fatal).
+// Returns a map of topicName → raw cleanup.policy value.
+func (c *Client) GetTopicConfigsBatch(ctx context.Context, topics []string) (map[string]string, error) {
+	if len(topics) == 0 {
+		return map[string]string{}, nil
+	}
+
+	result := make(map[string]string, len(topics))
+
+	for start := 0; start < len(topics); start += describeConfigsBatchSize {
+		end := start + describeConfigsBatchSize
+		if end > len(topics) {
+			end = len(topics)
+		}
+		chunk := topics[start:end]
+
+		resources := make([]kmsg.DescribeConfigsRequestResource, len(chunk))
+		for i, topic := range chunk {
+			resources[i] = kmsg.DescribeConfigsRequestResource{
+				ResourceType: kmsg.ConfigResourceTypeTopic,
+				ResourceName: topic,
+				ConfigNames:  []string{"cleanup.policy"},
+			}
+		}
+
+		req := kmsg.NewPtrDescribeConfigsRequest()
+		req.Resources = resources
+
+		resp, err := c.client.Request(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to describe configs batch (topics %d-%d): %w", start, end-1, err)
+		}
+
+		describeResp := resp.(*kmsg.DescribeConfigsResponse)
+		for _, resource := range describeResp.Resources {
+			if resource.ErrorCode != 0 {
+				logging.Warn("Failed to describe configs for topic %s: %v (error code %d)", resource.ResourceName, kerr.ErrorForCode(resource.ErrorCode), resource.ErrorCode)
+				continue
+			}
+			for _, cfg := range resource.Configs {
+				if cfg.Name == "cleanup.policy" && cfg.Value != nil {
+					result[resource.ResourceName] = *cfg.Value
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
+
 // topics and waits for metadata to confirm they are available. Kafka topic
 // creation is asynchronous, so non-zero response codes such as
 // REQUEST_TIMED_OUT can still result in a successfully created topic shortly

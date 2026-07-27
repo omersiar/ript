@@ -97,6 +97,7 @@ type listJSONItem struct {
 	StalePartitions   int             `json:"stale_partitions"`
 	TotalMessageCount int64           `json:"total_message_count"`
 	LastUpdateUnix    int64           `json:"last_update_unix"`
+	CleanupPolicy     string          `json:"cleanup_policy,omitempty"`
 	StalePartitionSet []partitionJSON `json:"stale_partition_details,omitempty"`
 }
 
@@ -122,6 +123,9 @@ func printListJSON(topics []*models.TopicStatus, opts *listOptions) error {
 			StalePartitions:   len(stalePartitions),
 			TotalMessageCount: topic.TotalMessageCount,
 			LastUpdateUnix:    topic.LastUpdate,
+		}
+		if topic.RetentionPolicy != nil {
+			item.CleanupPolicy = topic.RetentionPolicy.CleanupPolicy
 		}
 		if opts.includeStalePartitions {
 			item.StalePartitionSet = make([]partitionJSON, 0, len(stalePartitions))
@@ -154,23 +158,32 @@ func printListJSON(topics []*models.TopicStatus, opts *listOptions) error {
 
 func printListTable(topics []*models.TopicStatus, opts *listOptions) {
 	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "TOPIC\tSTATUS\tEMPTY\tPARTITIONS\tSTALE_PARTITIONS\tMESSAGES\tDISCOVERED\tOLDEST_AGE\tNEWEST_AGE")
+	fmt.Fprintln(w, "TOPIC\tSTATUS\tEMPTY\tPARTITIONS\tSTALE_PARTITIONS\tMESSAGES\tDISCOVERED\tOLDEST_AGE\tNEWEST_AGE\tPOLICY")
 	for _, topic := range topics {
 		stalePartitions := collectStalePartitions(topic, opts.staleDays)
 		emptyVal := "no"
 		if topic.IsEmpty {
 			emptyVal = "yes"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
+		msgVal := fmt.Sprintf("%d", topic.TotalMessageCount)
+		if topic.TotalMessageCount == -1 {
+			msgVal = "n/a"
+		}
+		policyVal := "-"
+		if topic.RetentionPolicy != nil && topic.RetentionPolicy.CleanupPolicy != "" {
+			policyVal = topic.RetentionPolicy.CleanupPolicy
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
 			topic.Name,
 			classifyTopicStatus(topic, opts.staleDays, opts.unusedDays),
 			emptyVal,
 			topic.PartitionCount,
 			len(stalePartitions),
-			topic.TotalMessageCount,
+			msgVal,
 			formatDiscoveryAge(topic.DiscoveryTime),
 			topic.OldestPartitionAge.String(),
 			topic.NewestPartitionAge.String(),
+			policyVal,
 		)
 		if opts.includeStalePartitions {
 			for _, part := range stalePartitions {

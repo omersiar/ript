@@ -73,7 +73,8 @@ func runScan(ctx context.Context, opts *scanOptions) error {
 
 	// nil workload balancer = this instance owns all partitions (scan everything).
 	topicTracker := tracker.NewWithOptions(runtime.kafkaClient, runtime.state, nil, 1, tracker.Options{
-		InstanceID: runtime.cfg.InstanceID,
+		InstanceID:              runtime.cfg.InstanceID,
+		TopicConfigCacheTTLDays: runtime.cfg.TopicConfigCacheTTLDays,
 	})
 
 	if err := topicTracker.RunOnceScan(ctx); err != nil {
