@@ -16,17 +16,18 @@ import (
 )
 
 type TopicTracker struct {
-	kafkaClient       *kafka.Client
-	stateManager      *kafka.StateManager
-	workloadBalancer  *kafka.WorkloadBalancer
-	scanInterval      time.Duration
-	instanceID        string
-	consumerGroupID   string
-	heartbeatInterval time.Duration
-	activeInstances   atomic.Pointer[map[string]models.InstanceInfo]
-	stopChan          chan struct{}
-	wg                sync.WaitGroup
-	scanMu            sync.Mutex
+	kafkaClient          *kafka.Client
+	stateManager         *kafka.StateManager
+	workloadBalancer     *kafka.WorkloadBalancer
+	scanInterval         time.Duration
+	instanceID           string
+	consumerGroupID      string
+	heartbeatInterval    time.Duration
+	configCacheTTLDays   int
+	activeInstances      atomic.Pointer[map[string]models.InstanceInfo]
+	stopChan             chan struct{}
+	wg                   sync.WaitGroup
+	scanMu               sync.Mutex
 	// globalMu guards globalTopics. globalSnapshot is rebuilt atomically after
 	// every merge so readers never need to hold globalMu.
 	globalMu        sync.RWMutex
@@ -40,6 +41,7 @@ type Options struct {
 	InstanceID               string
 	ConsumerGroupID          string
 	InstanceHeartbeatSeconds int
+	TopicConfigCacheTTLDays  int
 }
 
 type scanTopicData struct {
@@ -55,16 +57,22 @@ func NewWithOptions(kafkaClient *kafka.Client, stateManager *kafka.StateManager,
 		heartbeatInterval = 30 * time.Second
 	}
 
+	cacheTTLDays := opts.TopicConfigCacheTTLDays
+	if cacheTTLDays <= 0 {
+		cacheTTLDays = 30
+	}
+
 	tt := &TopicTracker{
-		kafkaClient:       kafkaClient,
-		stateManager:      stateManager,
-		workloadBalancer:  workloadBalancer,
-		scanInterval:      time.Duration(scanIntervalMinutes) * time.Minute,
-		instanceID:        opts.InstanceID,
-		consumerGroupID:   opts.ConsumerGroupID,
-		heartbeatInterval: heartbeatInterval,
-		stopChan:          make(chan struct{}),
-		globalTopics:      make(map[string]*models.TopicStatus),
+		kafkaClient:        kafkaClient,
+		stateManager:       stateManager,
+		workloadBalancer:   workloadBalancer,
+		scanInterval:       time.Duration(scanIntervalMinutes) * time.Minute,
+		instanceID:         opts.InstanceID,
+		consumerGroupID:    opts.ConsumerGroupID,
+		heartbeatInterval:  heartbeatInterval,
+		configCacheTTLDays: cacheTTLDays,
+		stopChan:           make(chan struct{}),
+		globalTopics:       make(map[string]*models.TopicStatus),
 	}
 	emptySnapshot := &models.ClusterSnapshot{
 		Topics:          make(map[string]*models.TopicStatus),
@@ -389,6 +397,34 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 	allOffsets := latestResult.offsets
 	allEarliestOffsets := earliestResult.offsets
 
+	// Determine which owned topics need a retention-policy describe refresh.
+	// A topic needs refresh when: (a) policy was never fetched (nil), or
+	// (b) the cached value is older than the configured TTL.
+	cacheTTL := int64(t.configCacheTTLDays) * 86400
+	topicsNeedingDescribe := make([]string, 0, len(ownedTopicPartitions))
+	for topicName := range ownedTopicPartitions {
+		var cachedFetchedAt int64
+		if prev, ok := previousGlobalSnapshot.Topics[topicName]; ok && prev.RetentionPolicy != nil {
+			cachedFetchedAt = prev.RetentionPolicy.FetchedAt
+		}
+		if cachedFetchedAt == 0 || (scanTime-cachedFetchedAt) >= cacheTTL {
+			topicsNeedingDescribe = append(topicsNeedingDescribe, topicName)
+		}
+	}
+
+	// Batch-describe topics that need a policy refresh. Franz-go sends one
+	// DescribeConfigs request per 200-topic chunk, keeping broker load light.
+	freshPolicies := map[string]string{}
+	if len(topicsNeedingDescribe) > 0 {
+		logging.Info("Describing retention policy for %d topic(s) (cache TTL=%d days)", len(topicsNeedingDescribe), t.configCacheTTLDays)
+		var describeErr error
+		freshPolicies, describeErr = t.kafkaClient.GetTopicConfigsBatch(ctx, topicsNeedingDescribe)
+		if describeErr != nil {
+			logging.Warn("Failed to describe topic configs: %v", describeErr)
+			freshPolicies = map[string]string{}
+		}
+	}
+
 	topicData := make([]scanTopicData, 0, len(ownedTopicPartitions))
 	for topicName, ownedPartitions := range ownedTopicPartitions {
 		offsets, ok := allOffsets[topicName]
@@ -415,11 +451,21 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 
 		// Preserve the Ignored flag from the previous snapshot to ensure that
 		// ignore state set via API persists across scan cycles.
+		// Also carry forward the existing retention policy as a fallback.
 		if previousTopic, ok := previousGlobalSnapshot.Topics[meta.name]; ok {
 			topicStatus.Ignored = previousTopic.Ignored
 			topicStatus.IgnoredAt = previousTopic.IgnoredAt
 			if previousTopic.DiscoveryTime > 0 {
 				topicStatus.DiscoveryTime = previousTopic.DiscoveryTime
+			}
+			topicStatus.RetentionPolicy = previousTopic.RetentionPolicy
+		}
+
+		// Apply freshly described retention policy if available.
+		if policy, ok := freshPolicies[meta.name]; ok {
+			topicStatus.RetentionPolicy = &models.RetentionPolicy{
+				CleanupPolicy: policy,
+				FetchedAt:     scanTime,
 			}
 		}
 
@@ -446,7 +492,9 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 			if newestTimestamp == 0 || partInfo.Timestamp > newestTimestamp {
 				newestTimestamp = partInfo.Timestamp
 			}
-			topicStatus.TotalMessageCount += partInfo.MessageCount
+			if !topicStatus.RetentionPolicy.IsCompacted() {
+				topicStatus.TotalMessageCount += partInfo.MessageCount
+			}
 		}
 
 		if oldestTimestamp > 0 {
@@ -466,8 +514,19 @@ func (t *TopicTracker) scanTopics(ctx context.Context) error {
 			for partID, partInfo := range globalTopic.Partitions {
 				if _, owned := topicStatus.Partitions[partID]; !owned {
 					topicStatus.Partitions[partID] = partInfo
-					topicStatus.TotalMessageCount += partInfo.MessageCount
+					if !topicStatus.RetentionPolicy.IsCompacted() {
+						topicStatus.TotalMessageCount += partInfo.MessageCount
+					}
 				}
+			}
+		}
+
+		// For compacted topics message counts are meaningless (compaction removes
+		// records), so we use -1 as a sentinel that the API and UI render as N/A.
+		if topicStatus.RetentionPolicy.IsCompacted() {
+			topicStatus.TotalMessageCount = -1
+			for _, p := range topicStatus.Partitions {
+				p.MessageCount = -1
 			}
 		}
 
@@ -633,6 +692,13 @@ func buildTopicStatusFromState(state *kafka.TopicState) *models.TopicStatus {
 		IgnoredAt:     state.IgnoredAt,
 	}
 
+	if state.RetentionPolicy != nil {
+		topicStatus.RetentionPolicy = &models.RetentionPolicy{
+			CleanupPolicy: state.RetentionPolicy.CleanupPolicy,
+			FetchedAt:     state.RetentionPolicy.FetchedAt,
+		}
+	}
+
 	var oldestTimestamp int64
 	var newestTimestamp int64
 
@@ -653,7 +719,9 @@ func buildTopicStatusFromState(state *kafka.TopicState) *models.TopicStatus {
 		if newestTimestamp == 0 || part.Timestamp > newestTimestamp {
 			newestTimestamp = part.Timestamp
 		}
-		topicStatus.TotalMessageCount += part.MessageCount
+		if !topicStatus.RetentionPolicy.IsCompacted() {
+			topicStatus.TotalMessageCount += part.MessageCount
+		}
 	}
 
 	topicStatus.PartitionCount = int32(len(state.Partitions))
@@ -662,6 +730,15 @@ func buildTopicStatusFromState(state *kafka.TopicState) *models.TopicStatus {
 	}
 	if newestTimestamp > 0 {
 		topicStatus.NewestPartitionAge = models.CalculateDuration(time.Unix(newestTimestamp, 0).UTC())
+	}
+
+	// For compacted topics message counts are meaningless; use -1 so the
+	// presentation layer can render N/A.
+	if topicStatus.RetentionPolicy.IsCompacted() {
+		topicStatus.TotalMessageCount = -1
+		for _, p := range topicStatus.Partitions {
+			p.MessageCount = -1
+		}
 	}
 
 	topicStatus.IsEmpty = len(topicStatus.Partitions) > 0
@@ -697,6 +774,7 @@ func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.Topi
 		Ignored:       incoming.Ignored,
 		IgnoredAt:     incoming.IgnoredAt,
 		Partitions:    make(map[int32]*models.PartitionInfo, len(incoming.Partitions)+len(existing.Partitions)),
+		RetentionPolicy: mergeRetentionPolicy(existing.RetentionPolicy, incoming.RetentionPolicy),
 	}
 
 	for partID, incomingPart := range incoming.Partitions {
@@ -723,7 +801,6 @@ func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.Topi
 
 	merged.PartitionCount = int32(len(merged.Partitions))
 	var oldest, newest int64
-	var totalMessages int64
 	for _, part := range merged.Partitions {
 		if oldest == 0 || part.Timestamp < oldest {
 			oldest = part.Timestamp
@@ -731,9 +808,22 @@ func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.Topi
 		if newest == 0 || part.Timestamp > newest {
 			newest = part.Timestamp
 		}
-		totalMessages += part.MessageCount
 	}
-	merged.TotalMessageCount = totalMessages
+
+	// Recompute total message count. For compacted topics use -1 (N/A).
+	if merged.RetentionPolicy.IsCompacted() {
+		merged.TotalMessageCount = -1
+		for _, p := range merged.Partitions {
+			p.MessageCount = -1
+		}
+	} else {
+		var totalMessages int64
+		for _, part := range merged.Partitions {
+			totalMessages += part.MessageCount
+		}
+		merged.TotalMessageCount = totalMessages
+	}
+
 	if oldest > 0 {
 		merged.OldestPartitionAge = models.CalculateDuration(time.Unix(oldest, 0).UTC())
 	}
@@ -763,6 +853,22 @@ func mergeTopicDiscoveryTime(existing, incoming int64) int64 {
 	default:
 		return existing
 	}
+}
+
+// mergeRetentionPolicy returns the more recently fetched policy. When only one
+// side is non-nil it wins. When both are non-nil the one with the higher
+// FetchedAt wins (fresher data). Returns nil only if both are nil.
+func mergeRetentionPolicy(existing, incoming *models.RetentionPolicy) *models.RetentionPolicy {
+	if existing == nil {
+		return incoming
+	}
+	if incoming == nil {
+		return existing
+	}
+	if incoming.FetchedAt >= existing.FetchedAt {
+		return incoming
+	}
+	return existing
 }
 
 func (t *TopicTracker) syncInstancesFromState(snapshot *kafka.StateSnapshot) {

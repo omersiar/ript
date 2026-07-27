@@ -34,6 +34,9 @@ type Config struct {
 	StalePartitionDays int
 	UnusedTopicDays    int
 
+	// Topic config cache TTL
+	TopicConfigCacheTTLDays int
+
 	// Pagination
 	DefaultPageSize int
 	MaxPageSize     int
@@ -83,6 +86,7 @@ func Load() (*Config, error) {
 
 		StalePartitionDays:               getInt("RIPT_STALE_PARTITION_DAYS", 7),
 		UnusedTopicDays:                  getInt("RIPT_UNUSED_TOPIC_DAYS", 30),
+		TopicConfigCacheTTLDays:          getInt("RIPT_TOPIC_CONFIG_CACHE_TTL_DAYS", 30),
 		DefaultPageSize:                  getInt("RIPT_DEFAULT_PAGE_SIZE", 50),
 		MaxPageSize:                      getInt("RIPT_MAX_PAGE_SIZE", 500),
 		InstanceHeartbeatIntervalSeconds: getInt("RIPT_INSTANCE_HEARTBEAT_SECONDS", 30),
@@ -166,6 +170,9 @@ func (c *Config) Validate() error {
 	if c.UnusedTopicDays < c.StalePartitionDays {
 		return fmt.Errorf("RIPT_UNUSED_TOPIC_DAYS must be greater than or equal to RIPT_STALE_PARTITION_DAYS")
 	}
+	if c.TopicConfigCacheTTLDays < 1 {
+		return fmt.Errorf("RIPT_TOPIC_CONFIG_CACHE_TTL_DAYS must be at least 1")
+	}
 	if c.DefaultPageSize < 1 {
 		return fmt.Errorf("RIPT_DEFAULT_PAGE_SIZE must be at least 1")
 	}
@@ -182,11 +189,11 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) String() string {
-	return fmt.Sprintf("Config{Brokers: %v, ScanInterval: %dm, StateTopic: %s, ConsumerGroupID: %s, GroupSessionTimeoutMS: %d, GroupHeartbeatMS: %d, GroupRebalanceTimeoutMS: %d, Partitions: %d, RF: %d, SegmentMS: %d, MinCleanableRatio: %g, StateLoadTimeout: %ds, InstanceID: %s, HTTPHost: %s, HTTPPort: %d, StaticFilesDir: %s, LogLevel: %s, StaleDays: %d, UnusedDays: %d, HeartbeatInterval: %ds, ConnectRetry: %ds, KafkaSecurityProtocol: %s, KafkaSASLMechanism: %s, KafkaSASLUsername: %s, KafkaSASLPassword: %s, KafkaSASLOAuthTokenEndpoint: %s, KafkaSASLOAuthClientID: %s, KafkaSASLOAuthClientSecret: %s, KafkaSASLOAuthScope: %s, KafkaTLSCACertFile: %s, KafkaTLSClientCertFile: %s, KafkaTLSClientKeyFile: %s, KafkaTLSInsecureSkip: %t}",
+	return fmt.Sprintf("Config{Brokers: %v, ScanInterval: %dm, StateTopic: %s, ConsumerGroupID: %s, GroupSessionTimeoutMS: %d, GroupHeartbeatMS: %d, GroupRebalanceTimeoutMS: %d, Partitions: %d, RF: %d, SegmentMS: %d, MinCleanableRatio: %g, StateLoadTimeout: %ds, InstanceID: %s, HTTPHost: %s, HTTPPort: %d, StaticFilesDir: %s, LogLevel: %s, StaleDays: %d, UnusedDays: %d, TopicConfigCacheTTLDays: %d, HeartbeatInterval: %ds, ConnectRetry: %ds, KafkaSecurityProtocol: %s, KafkaSASLMechanism: %s, KafkaSASLUsername: %s, KafkaSASLPassword: %s, KafkaSASLOAuthTokenEndpoint: %s, KafkaSASLOAuthClientID: %s, KafkaSASLOAuthClientSecret: %s, KafkaSASLOAuthScope: %s, KafkaTLSCACertFile: %s, KafkaTLSClientCertFile: %s, KafkaTLSClientKeyFile: %s, KafkaTLSInsecureSkip: %t}",
 		c.KafkaBrokers, c.ScanIntervalMinutes, c.TrackerTopic,
 		c.TrackerConsumerGroupID, c.TrackerGroupSessionTimeoutMS, c.TrackerGroupHeartbeatMS, c.TrackerGroupRebalanceTimeoutMS,
 		c.TrackerTopicPartitions, c.TrackerTopicReplicationFactor, c.TrackerTopicSegmentMS, c.TrackerTopicMinCleanableRatio, c.StateLoadTimeoutSeconds,
-		c.InstanceID, c.HTTPHost, c.HTTPPort, c.StaticFilesDir, c.LogLevel, c.StalePartitionDays, c.UnusedTopicDays,
+		c.InstanceID, c.HTTPHost, c.HTTPPort, c.StaticFilesDir, c.LogLevel, c.StalePartitionDays, c.UnusedTopicDays, c.TopicConfigCacheTTLDays,
 		c.InstanceHeartbeatIntervalSeconds, c.KafkaConnectRetrySeconds, c.KafkaSecurityProtocol, c.KafkaSASLMechanism,
 		c.KafkaSASLUsername, redactSensitive(c.KafkaSASLPassword), c.KafkaSASLOAuthTokenEndpoint,
 		c.KafkaSASLOAuthClientID, redactSensitive(c.KafkaSASLOAuthClientSecret), c.KafkaSASLOAuthScope,

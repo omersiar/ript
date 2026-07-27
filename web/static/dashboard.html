@@ -406,6 +406,11 @@
             color: #055160;
         }
 
+        .badge-compact {
+            background: #e8f5e9;
+            color: #1b5e20;
+        }
+
         .filter-chip {
             display: inline-flex;
             align-items: center;
@@ -1022,6 +1027,22 @@
 
         // getStatusByAge is used for individual partitions only — no Has Unused / Has Stale needed there.
 
+        // Returns true when the cleanup policy includes log compaction.
+        function isCompacted(policy) {
+            if (!policy) return false;
+            return policy.split(',').some(t => t.trim().toLowerCase() === 'compact');
+        }
+
+        // Returns a human-readable policy label for use in badges and meta lines.
+        // Returns empty string for pure delete (no badge needed).
+        function formatCleanupPolicy(policy) {
+            if (!policy) return '';
+            const lower = policy.toLowerCase().replace(/\s/g, '');
+            if (lower === 'compact') return 'Compact';
+            if (lower === 'compact,delete' || lower === 'delete,compact') return 'Delete+Compact';
+            return '';
+        }
+
         function timestampToAgeDays(epochSeconds) {
             if (!epochSeconds) return 0;
             return (Math.floor(Date.now() / 1000) - epochSeconds) / 86400;
@@ -1455,6 +1476,13 @@
                 const ignoredBadge = topic.ignored
                     ? '<span class="badge badge-status badge-ignored">Ignored</span>'
                     : '';
+                const policyLabel = formatCleanupPolicy(topic.cleanup_policy);
+                const compactBadge = policyLabel
+                    ? `<span class="badge badge-status badge-compact">${policyLabel}</span>`
+                    : '';
+                const msgDisplay = topic.total_message_count === -1
+                    ? 'N/A'
+                    : (topic.total_message_count || 0).toLocaleString();
 
                 return `
                     <tr class="${topic.ignored ? 'topic-row-ignored' : ''}">
@@ -1465,10 +1493,11 @@
                                     ${renderCopyButton(topic.name, true)}
                                 </span>
                                 ${ignoredBadge}
+                                ${compactBadge}
                             </div>
                         </td>
                         <td>${topic.partition_count}</td>
-                        <td>${(topic.total_message_count || 0).toLocaleString()}</td>
+                        <td>${msgDisplay}</td>
                         <td><code>${formatAge(topic.oldest_partition_timestamp)}</code></td>
                         <td><span class="badge badge-status ${status.className}">${status.label}</span></td>
                         <td>${emptyBadge}</td>
@@ -1491,7 +1520,9 @@
             modalCopyBtn.setAttribute('data-copy-value', topicName);
             ignoredBadge.style.display = details.ignored ? '' : 'none';
 
-            meta.textContent = `Partitions: ${details.partition_count} | Discovered: ${formatRelativeTime(details.discovery_time)} | Oldest age: ${formatAge(details.oldest_timestamp)} | Last update: ${formatRelativeTime(details.last_update)} | Ignored: ${details.ignored ? 'yes' : 'no'}`;
+            const policyLabel = formatCleanupPolicy(details.cleanup_policy);
+            const policyPart = policyLabel ? ` | Policy: ${policyLabel}` : (details.cleanup_policy ? ` | Policy: ${details.cleanup_policy}` : '');
+            meta.textContent = `Partitions: ${details.partition_count} | Discovered: ${formatRelativeTime(details.discovery_time)} | Oldest age: ${formatAge(details.oldest_timestamp)} | Last update: ${formatRelativeTime(details.last_update)} | Ignored: ${details.ignored ? 'yes' : 'no'}${policyPart}`;
             ignoreBtn.style.display = '';
             ignoreBtn.disabled = false;
             ignoreBtn.setAttribute('data-topic-name', topicName);
@@ -1512,11 +1543,14 @@
                 const ageDays = timestampToAgeDays(part.timestamp);
                 const status = getStatusByAge(ageDays, thresholds);
                 const emptyBadge = part.is_empty ? '<span class="badge badge-status badge-empty">Empty</span>' : '-';
+                const partMsgDisplay = part.message_count === -1
+                    ? 'N/A'
+                    : (part.message_count || 0).toLocaleString();
                 return `
                     <tr>
                         <td>${part.partition}</td>
                         <td>${part.offset}</td>
-                        <td>${(part.message_count || 0).toLocaleString()}</td>
+                        <td>${partMsgDisplay}</td>
                         <td><code>${formatAge(part.timestamp)}</code></td>
                         <td><span class="badge badge-status ${status.className}">${status.label}</span></td>
                         <td>${emptyBadge}</td>
