@@ -2,6 +2,7 @@ package api
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -15,17 +16,25 @@ import (
 	"github.com/omersiar/ript/internal/config"
 	"github.com/omersiar/ript/internal/logging"
 	"github.com/omersiar/ript/internal/models"
-	"github.com/omersiar/ript/internal/tracker"
 )
 
+type TopicService interface {
+	GetSnapshot() *models.ClusterSnapshot
+	GetTopic(name string) *models.TopicStatus
+	GetUnusedTopics(unusedDays int) []*models.TopicStatus
+	GetEmptyTopics() []*models.TopicStatus
+	GetInstances() []models.InstanceInfo
+	UpdateTopicIgnored(ctx context.Context, topicName string, ignored bool) error
+}
+
 type Server struct {
-	trackerPtr *tracker.TopicTracker
+	trackerPtr TopicService
 	router     *gin.Engine
 	addr       string
 	cfg        *config.Config
 }
 
-func New(trackerPtr *tracker.TopicTracker, addr string, cfg *config.Config) *Server {
+func New(trackerPtr TopicService, addr string, cfg *config.Config) *Server {
 	return &Server{
 		trackerPtr: trackerPtr,
 		addr:       addr,
@@ -56,6 +65,14 @@ type topicResponse struct {
 type thresholdValues struct {
 	StaleDays  int
 	UnusedDays int
+}
+
+type listedTopicsResult struct {
+	paged      []topicResponse
+	total      int
+	page       pagination
+	hasMore    bool
+	thresholds thresholdValues
 }
 
 func (s *Server) Initialize() {
@@ -118,51 +135,26 @@ func (s *Server) handleListTopics(c *gin.Context) {
 		return
 	}
 
-	p, err := s.parsePagination(c)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
 	snapshot := s.trackerPtr.GetSnapshot()
-	thresholds, err := s.parseThresholds(c)
+	result, err := s.buildListedTopics(c, func(_ thresholdValues) []*models.TopicStatus {
+		topics := make([]*models.TopicStatus, 0, len(snapshot.Topics))
+		for _, topic := range snapshot.Topics {
+			topics = append(topics, topic)
+		}
+		return topics
+	})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	sortBy, sortDir := parseSort(c)
-	searchRe, err := parseSearch(c)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	ignoredFilter := parseIgnoredFilter(c)
-
-	topics := make([]topicResponse, 0, len(snapshot.Topics))
-	for _, topic := range snapshot.Topics {
-		r := buildTopicResponse(topic)
-		if searchRe != nil && !searchRe.MatchString(r.Name) {
-			continue
-		}
-		if !ignoredFilter(&r) {
-			continue
-		}
-		topics = append(topics, r)
-	}
-
-	s.sortTopicResponses(topics, sortBy, sortDir, thresholds.StaleDays, thresholds.UnusedDays)
-
-	total := len(topics)
-	paged, hasMore := paginateTopicResponses(topics, p)
 
 	c.JSON(http.StatusOK, gin.H{
-		"topics":    paged,
-		"count":     len(paged),
-		"total":     total,
-		"page":      p.Page,
-		"limit":     p.Limit,
-		"has_more":  hasMore,
+		"topics":    result.paged,
+		"count":     len(result.paged),
+		"total":     result.total,
+		"page":      result.page.Page,
+		"limit":     result.page.Limit,
+		"has_more":  result.hasMore,
 		"timestamp": snapshot.Timestamp,
 	})
 }
@@ -231,53 +223,23 @@ func (s *Server) handleGetUnused(c *gin.Context) {
 		return
 	}
 
-	p, err := s.parsePagination(c)
+	result, err := s.buildListedTopics(c, func(thresholds thresholdValues) []*models.TopicStatus {
+		return s.trackerPtr.GetUnusedTopics(thresholds.UnusedDays)
+	})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	thresholds, err := s.parseThresholds(c)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	sortBy, sortDir := parseSort(c)
-	searchRe, err := parseSearch(c)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	ignoredFilter := parseIgnoredFilter(c)
-
-	unused := s.trackerPtr.GetUnusedTopics(thresholds.UnusedDays)
-
-	topics := make([]topicResponse, 0, len(unused))
-	for _, topic := range unused {
-		r := buildTopicResponse(topic)
-		if searchRe != nil && !searchRe.MatchString(r.Name) {
-			continue
-		}
-		if !ignoredFilter(&r) {
-			continue
-		}
-		topics = append(topics, r)
-	}
-
-	s.sortTopicResponses(topics, sortBy, sortDir, thresholds.StaleDays, thresholds.UnusedDays)
-
-	total := len(topics)
-	paged, hasMore := paginateTopicResponses(topics, p)
 
 	c.JSON(http.StatusOK, gin.H{
-		"stale_days":    thresholds.StaleDays,
-		"unused_days":   thresholds.UnusedDays,
-		"unused_topics": paged,
-		"count":         len(paged),
-		"total":         total,
-		"page":          p.Page,
-		"limit":         p.Limit,
-		"has_more":      hasMore,
+		"stale_days":    result.thresholds.StaleDays,
+		"unused_days":   result.thresholds.UnusedDays,
+		"unused_topics": result.paged,
+		"count":         len(result.paged),
+		"total":         result.total,
+		"page":          result.page.Page,
+		"limit":         result.page.Limit,
+		"has_more":      result.hasMore,
 	})
 }
 
@@ -286,24 +248,45 @@ func (s *Server) handleGetEmpty(c *gin.Context) {
 		return
 	}
 
-	p, err := s.parsePagination(c)
+	result, err := s.buildListedTopics(c, func(_ thresholdValues) []*models.TopicStatus {
+		return s.trackerPtr.GetEmptyTopics()
+	})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"empty_topics": result.paged,
+		"count":        len(result.paged),
+		"total":        result.total,
+		"page":         result.page.Page,
+		"limit":        result.page.Limit,
+		"has_more":     result.hasMore,
+	})
+}
+
+func (s *Server) buildListedTopics(c *gin.Context, listSource func(thresholdValues) []*models.TopicStatus) (*listedTopicsResult, error) {
+	p, err := s.parsePagination(c)
+	if err != nil {
+		return nil, err
+	}
+
+	thresholds, err := s.parseThresholds(c)
+	if err != nil {
+		return nil, err
 	}
 
 	sortBy, sortDir := parseSort(c)
 	searchRe, err := parseSearch(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		return nil, err
 	}
 	ignoredFilter := parseIgnoredFilter(c)
 
-	emptyTopics := s.trackerPtr.GetEmptyTopics()
-
-	topics := make([]topicResponse, 0, len(emptyTopics))
-	for _, topic := range emptyTopics {
+	sourceTopics := listSource(thresholds)
+	responses := make([]topicResponse, 0, len(sourceTopics))
+	for _, topic := range sourceTopics {
 		r := buildTopicResponse(topic)
 		if searchRe != nil && !searchRe.MatchString(r.Name) {
 			continue
@@ -311,28 +294,20 @@ func (s *Server) handleGetEmpty(c *gin.Context) {
 		if !ignoredFilter(&r) {
 			continue
 		}
-		topics = append(topics, r)
+		responses = append(responses, r)
 	}
 
-	thresholds, err := s.parseThresholds(c)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+	s.sortTopicResponses(responses, sortBy, sortDir, thresholds.StaleDays, thresholds.UnusedDays)
 
-	s.sortTopicResponses(topics, sortBy, sortDir, thresholds.StaleDays, thresholds.UnusedDays)
-
-	total := len(topics)
-	paged, hasMore := paginateTopicResponses(topics, p)
-
-	c.JSON(http.StatusOK, gin.H{
-		"empty_topics": paged,
-		"count":        len(paged),
-		"total":        total,
-		"page":         p.Page,
-		"limit":        p.Limit,
-		"has_more":     hasMore,
-	})
+	total := len(responses)
+	paged, hasMore := paginateTopicResponses(responses, p)
+	return &listedTopicsResult{
+		paged:      paged,
+		total:      total,
+		page:       p,
+		hasMore:    hasMore,
+		thresholds: thresholds,
+	}, nil
 }
 
 func (s *Server) handleStats(c *gin.Context) {
@@ -552,56 +527,65 @@ func parseSort(c *gin.Context) (sortBy, sortDir string) {
 	return sortBy, sortDir
 }
 
-// parseIgnoredFilter returns a filter function based on the "ignored" query param.
-// Valid values: "true" (only ignored), "false" (only non-ignored), "all" (both, default).
-// Returns a predicate function that returns true if the topic should be included.
-func parseIgnoredFilter(c *gin.Context) func(*topicResponse) bool {
-	ignoredParam := strings.ToLower(strings.TrimSpace(c.DefaultQuery("ignored", "false")))
-	switch ignoredParam {
-	case "true":
-		return func(t *topicResponse) bool { return t.Ignored }
-	case "false":
-		return func(t *topicResponse) bool { return !t.Ignored }
-	case "all":
-		return func(t *topicResponse) bool { return true }
-	default:
-		// Default to "false" - show non-ignored topics
-		return func(t *topicResponse) bool { return !t.Ignored }
-	}
+var ignoredFilterStrategies = map[string]func(*topicResponse) bool{
+	"true":  func(t *topicResponse) bool { return t.Ignored },
+	"false": func(t *topicResponse) bool { return !t.Ignored },
+	"all":   func(_ *topicResponse) bool { return true },
 }
 
-// statusOrder returns a sort bucket: 0=Active, 1=Has Stale, 2=Stale, 3=Has Unused, 4=Unused.
-func statusOrder(t topicResponse, now int64, staleDays, unusedDays int) int {
+// parseIgnoredFilter returns a predicate based on the "ignored" query param.
+// Valid values: "true", "false", and "all". Invalid values default to "false".
+func parseIgnoredFilter(c *gin.Context) func(*topicResponse) bool {
+	ignoredParam := strings.ToLower(strings.TrimSpace(c.DefaultQuery("ignored", "false")))
+	if filter, ok := ignoredFilterStrategies[ignoredParam]; ok {
+		return filter
+	}
+	return ignoredFilterStrategies["false"]
+}
+
+type topicStatusBucket int
+
+const (
+	statusActive topicStatusBucket = iota
+	statusHasStale
+	statusStale
+	statusHasUnused
+	statusUnused
+)
+
+var topicStatusLabels = map[topicStatusBucket]string{
+	statusActive:    "active",
+	statusHasStale:  "has_stale",
+	statusStale:     "stale",
+	statusHasUnused: "has_unused",
+	statusUnused:    "unused",
+}
+
+// statusOrder returns status bucket for stable status sorting.
+func statusOrder(t topicResponse, now int64, staleDays, unusedDays int) topicStatusBucket {
 	newestAgeDays := float64(now-t.NewestPartitionTimestamp) / 86400
 	oldestAgeDays := float64(now-t.OldestPartitionTimestamp) / 86400
 	if newestAgeDays >= float64(unusedDays) {
-		return 4
+		return statusUnused
 	}
 	if oldestAgeDays >= float64(unusedDays) {
-		return 3
+		return statusHasUnused
 	}
 	if newestAgeDays >= float64(staleDays) {
-		return 2
+		return statusStale
 	}
 	if oldestAgeDays >= float64(staleDays) {
-		return 1
+		return statusHasStale
 	}
-	return 0
+	return statusActive
 }
 
-func statusLabelFromOrder(order int) string {
-	switch order {
-	case 4:
-		return "unused"
-	case 3:
-		return "has_unused"
-	case 2:
-		return "stale"
-	case 1:
-		return "has_stale"
-	default:
-		return "active"
+
+func statusLabelFromOrder(order topicStatusBucket) string {
+	if label, ok := topicStatusLabels[order]; ok {
+		return label
 	}
+	return topicStatusLabels[statusActive]
 }
 
 func annotateTopicStatuses(topics []topicResponse, now int64, staleDays, unusedDays int) {

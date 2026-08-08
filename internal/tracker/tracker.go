@@ -15,10 +15,38 @@ import (
 	"github.com/omersiar/ript/internal/models"
 )
 
+type KafkaClient interface {
+	ListTopicsWithPartitions(ctx context.Context) (map[string][]int32, error)
+	GetHighWatermarksBatch(ctx context.Context, topicPartitions map[string][]int32) (map[string]map[int32]int64, error)
+	GetEarliestWatermarksBatch(ctx context.Context, topicPartitions map[string][]int32) (map[string]map[int32]int64, error)
+	GetTopicConfigsBatch(ctx context.Context, topicNames []string) (map[string]string, error)
+}
+
+type StateManager interface {
+	EnsureTrackerTopic(ctx context.Context) error
+	SaveSnapshot(ctx context.Context, snapshot *models.ClusterSnapshot) error
+	SaveTopicState(ctx context.Context, topicName string, topicStatus *models.TopicStatus) error
+	DeleteTopicState(ctx context.Context, topicName string) error
+	SaveInstanceHeartbeat(ctx context.Context, record *kafka.HeartbeatRecord) error
+	DeregisterInstance(ctx context.Context, instanceID string) error
+	LoadLatestSnapshot(ctx context.Context) (*kafka.StateSnapshot, *kafka.StateLoadStats, error)
+	SubscribeGlobalUpdates(ctx context.Context, startOffsets map[int32]int64, onRecord func(key string, value []byte))
+}
+
+type WorkloadBalancer interface {
+	Start(ctx context.Context) error
+	Stop()
+	WaitForAssignments(ctx context.Context, timeout time.Duration) bool
+	WaitForStableAssignments(ctx context.Context, timeout time.Duration) bool
+	AssignmentEpoch() uint64
+	AssignedShardCount() int
+	OwnsTopic(topicName string) bool
+}
+
 type TopicTracker struct {
-	kafkaClient          *kafka.Client
-	stateManager         *kafka.StateManager
-	workloadBalancer     *kafka.WorkloadBalancer
+	kafkaClient          KafkaClient
+	stateManager         StateManager
+	workloadBalancer     WorkloadBalancer
 	scanInterval         time.Duration
 	instanceID           string
 	consumerGroupID      string
@@ -51,7 +79,7 @@ type scanTopicData struct {
 	earliestOffsets map[int32]int64
 }
 
-func NewWithOptions(kafkaClient *kafka.Client, stateManager *kafka.StateManager, workloadBalancer *kafka.WorkloadBalancer, scanIntervalMinutes int, opts Options) *TopicTracker {
+func NewWithOptions(kafkaClient KafkaClient, stateManager StateManager, workloadBalancer WorkloadBalancer, scanIntervalMinutes int, opts Options) *TopicTracker {
 	heartbeatInterval := time.Duration(opts.InstanceHeartbeatSeconds) * time.Second
 	if heartbeatInterval <= 0 {
 		heartbeatInterval = 30 * time.Second
