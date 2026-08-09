@@ -31,23 +31,34 @@ type Logger struct {
 
 var globalLogger *Logger
 
+func parseLevel(level string) Level {
+	switch strings.ToLower(level) {
+	case "debug":
+		return DEBUG
+	case "warn":
+		return WARN
+	case "error":
+		return ERROR
+	case "info", "":
+		return INFO
+	default:
+		return INFO
+	}
+}
+
+func newLogger(level Level, w io.Writer) *Logger {
+	if w == nil {
+		w = os.Stdout
+	}
+
+	return &Logger{
+		level:  level,
+		logger: log.New(w, "", log.LstdFlags),
+	}
+}
+
 func Init(level string) {
-	levelMap := map[string]Level{
-		"debug": DEBUG,
-		"info":  INFO,
-		"warn":  WARN,
-		"error": ERROR,
-	}
-
-	logLevel := INFO
-	if l, ok := levelMap[strings.ToLower(level)]; ok {
-		logLevel = l
-	}
-
-	globalLogger = &Logger{
-		level:  logLevel,
-		logger: log.New(os.Stdout, "", log.LstdFlags),
-	}
+	globalLogger = newLogger(parseLevel(level), os.Stdout)
 }
 
 func (l *Logger) log(level Level, msg string, args ...interface{}) {
