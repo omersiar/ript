@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +46,9 @@ type TopicTracker struct {
 	kafkaClient          KafkaClient
 	stateManager         StateManager
 	workloadBalancer     WorkloadBalancer
+	scanManager          *ScanManager
+	heartbeatManager     *HeartbeatManager
+	consumerManager      *ConsumerManager
 	scanInterval         time.Duration
 	instanceID           string
 	consumerGroupID      string
@@ -70,13 +72,6 @@ type Options struct {
 	ConsumerGroupID          string
 	InstanceHeartbeatSeconds int
 	TopicConfigCacheTTLDays  int
-}
-
-type scanTopicData struct {
-	name            string
-	partitions      []int32
-	offsets         map[int32]int64
-	earliestOffsets map[int32]int64
 }
 
 func NewWithOptions(kafkaClient KafkaClient, stateManager StateManager, workloadBalancer WorkloadBalancer, scanIntervalMinutes int, opts Options) *TopicTracker {
@@ -112,6 +107,9 @@ func NewWithOptions(kafkaClient KafkaClient, stateManager StateManager, workload
 	tt.globalSnapshot.Store(emptySnapshot)
 	emptyInstances := make(map[string]models.InstanceInfo)
 	tt.activeInstances.Store(&emptyInstances)
+	tt.scanManager = NewScanManager(tt)
+	tt.heartbeatManager = NewHeartbeatManager(tt)
+	tt.consumerManager = NewConsumerManager(tt)
 	return tt
 }
 
@@ -126,7 +124,7 @@ func (t *TopicTracker) Start(ctx context.Context) error {
 	if err == nil && snapshot != nil {
 		logging.Info("Loaded previous snapshot from %v", time.Unix(snapshot.Timestamp, 0).UTC())
 		t.syncGlobalFromState(snapshot)
-		t.syncInstancesFromState(snapshot)
+		t.heartbeatManager.syncInstancesFromState(snapshot)
 		if loadStats != nil && loadStats.TopicExists {
 			status := "complete"
 			if loadStats.TimedOut {
@@ -169,35 +167,22 @@ func (t *TopicTracker) Start(ctx context.Context) error {
 
 	// Write an initial heartbeat before starting the periodic loop so that
 	// the instance is immediately visible to peers.
-	if err := t.writeLocalHeartbeat(ctx); err != nil {
+	if err := t.heartbeatManager.writeLocalHeartbeat(ctx); err != nil {
 		logging.Warn("Failed to write initial heartbeat: %v", err)
 	}
 
-	t.startGlobalConsumerLoop(ctx, resumeOffsets)
-
-	t.wg.Add(2)
-	go t.scanLoop(ctx)
-	go t.heartbeatLoop(ctx)
+	t.consumerManager.startGlobalConsumerLoop(ctx, resumeOffsets)
+	t.scanManager.startLoop(ctx)
+	t.heartbeatManager.startLoop(ctx)
 
 	return nil
 }
 
 func (t *TopicTracker) Stop() {
-	// Write a tombstone for this instance before shutting down so other
-	// instances (and the next restart) immediately remove it from the
-	// active-instances list.
-	if t.stateManager != nil && t.instanceID != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := t.stateManager.DeregisterInstance(ctx, t.instanceID); err != nil {
-			logging.Warn("Failed to write instance tombstone on shutdown: %v", err)
-		}
-		cancel()
-	}
+	t.heartbeatManager.deregisterOnShutdown()
 
 	close(t.stopChan)
-	if t.globalCancel != nil {
-		t.globalCancel()
-	}
+	t.consumerManager.stopGlobalConsumerLoop()
 	// Stop the workload balancer (sends LeaveGroup) before waiting for in-flight
 	// scans to complete. Heartbeating in franz-go is driven by PollFetches; once
 	// the poll loop exits its heartbeats stop. If we waited for t.wg.Wait() first
@@ -211,389 +196,6 @@ func (t *TopicTracker) Stop() {
 	logging.Info("Topic tracker stopped")
 }
 
-func (t *TopicTracker) scanLoop(ctx context.Context) {
-	defer t.wg.Done()
-
-	// Run one scan immediately on startup so the first view is populated
-	// without waiting for the first ticker interval.
-	t.runScanCycle(ctx)
-
-	ticker := time.NewTicker(t.scanInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-t.stopChan:
-			return
-		case <-ticker.C:
-			t.runScanCycle(ctx)
-		}
-	}
-}
-
-func (t *TopicTracker) runScanCycle(ctx context.Context) {
-	if !t.scanMu.TryLock() {
-		logging.Warn("Skipping scan cycle: previous scan still in progress")
-		return
-	}
-	if err := t.prepareForScan(ctx); err != nil {
-		t.scanMu.Unlock()
-		logging.Warn("Skipping scan cycle: %v", err)
-		return
-	}
-	err := t.scanTopics(ctx)
-	t.scanMu.Unlock()
-	if err != nil {
-		logging.Error("Error during scan: %v", err)
-	}
-}
-
-func (t *TopicTracker) prepareForScan(ctx context.Context) error {
-	if t.workloadBalancer == nil {
-		return nil
-	}
-
-	if !t.workloadBalancer.WaitForStableAssignments(ctx, 30*time.Second) {
-		return fmt.Errorf("consumer group rebalance still in progress")
-	}
-	if t.workloadBalancer.AssignedShardCount() == 0 {
-		return fmt.Errorf("no shards assigned after rebalance stabilization")
-	}
-
-	epoch := t.workloadBalancer.AssignmentEpoch()
-	if epoch == t.assignmentEpoch {
-		return nil
-	}
-
-	logging.Info("Workload assignment epoch changed: previous=%d current=%d; replaying tracker state", t.assignmentEpoch, epoch)
-	if err := t.replayState(ctx); err != nil {
-		return fmt.Errorf("failed to replay tracker state after rebalance: %w", err)
-	}
-
-	t.assignmentEpoch = epoch
-	return nil
-}
-
-func (t *TopicTracker) replayState(ctx context.Context) error {
-	if t.stateManager == nil {
-		return nil
-	}
-
-	snapshot, loadStats, err := t.stateManager.LoadLatestSnapshot(ctx)
-	if err != nil {
-		return err
-	}
-	if snapshot == nil {
-		return nil
-	}
-
-	t.syncGlobalFromState(snapshot)
-	t.syncInstancesFromState(snapshot)
-
-	if loadStats != nil && loadStats.TopicExists {
-		status := "complete"
-		if loadStats.TimedOut {
-			status = "partial_timeout"
-		}
-		logging.Info("Post-rebalance state replay stats: total_messages=%d duplicate_keys=%d discarded=%d tombstones=%d unique_keys=%d malformed=%d partitions_with_data=%d duration_ms=%d final_topics=%d final_instances=%d status=%s",
-			loadStats.TotalRecords,
-			loadStats.DuplicateKeyRecords,
-			loadStats.DiscardedRecords,
-			loadStats.TombstoneRecords,
-			loadStats.UniqueKeysSeen,
-			loadStats.MalformedRecords,
-			loadStats.PartitionsScanned,
-			loadStats.LoadDuration.Milliseconds(),
-			loadStats.FinalTopicCount,
-			loadStats.FinalInstanceCount,
-			status,
-		)
-	}
-
-	return nil
-}
-
-// heartbeatLoop periodically writes the local instance heartbeat to the
-// tracker topic on a wall-clock interval, independent of scan cycles.
-func (t *TopicTracker) heartbeatLoop(ctx context.Context) {
-	defer t.wg.Done()
-
-	ticker := time.NewTicker(t.heartbeatInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-t.stopChan:
-			return
-		case <-ticker.C:
-			if err := t.writeLocalHeartbeat(ctx); err != nil {
-				logging.Warn("Heartbeat write failed: %v", err)
-			}
-		}
-	}
-}
-
-func (t *TopicTracker) scanTopics(ctx context.Context) error {
-	scanStartedAt := time.Now()
-
-	// Single MetadataRequest returns all topics with their full partition lists,
-	// replacing the previous pattern of 1 ListTopics + N GetTopicPartitions calls.
-	allTopics, err := t.kafkaClient.ListTopicsWithPartitions(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to list topics: %w", err)
-	}
-
-	previousGlobalSnapshot := t.globalSnapshot.Load()
-
-	// Build a set of all topics currently in Kafka (before ownership filtering)
-	// so we can detect topics that have been deleted since the last scan.
-	kafkaTopicSet := make(map[string]struct{}, len(allTopics))
-	for topicName := range allTopics {
-		kafkaTopicSet[topicName] = struct{}{}
-	}
-
-	scanTime := time.Now().UTC().Unix()
-
-	snapshot := &models.ClusterSnapshot{
-		Topics:    make(map[string]*models.TopicStatus),
-		Timestamp: scanTime,
-		Version:   1,
-	}
-
-	assignedTopics := 0
-	processedTopics := 0
-	processedPartitions := 0
-
-	// Apply ownership filter: only track topics assigned to this instance.
-	// Ownership is per topic (not per partition) — the same partition that the
-	// StateManager writes the topic's state record to determines ownership, using
-	// Kafka's standard Murmur2 hash of the topic name. All physical partitions of
-	// an owned topic are scanned by this instance; none are split across instances.
-	ownedTopicPartitions := make(map[string][]int32, len(allTopics))
-	for topicName, partitions := range allTopics {
-		if t.workloadBalancer != nil && !t.workloadBalancer.OwnsTopic(topicName) {
-			continue
-		}
-		assignedTopics++
-		ownedTopicPartitions[topicName] = partitions
-	}
-
-	// During transient rebalance/loss windows (for example after host sleep),
-	// this instance can briefly own zero shards. Do not replace local snapshot
-	// with an empty/partial view in that window, otherwise unchanged partitions
-	// lose their previous timestamps and ages reset on the next scan.
-	if len(ownedTopicPartitions) == 0 {
-		assignedShards := 0
-		if t.workloadBalancer != nil {
-			assignedShards = t.workloadBalancer.AssignedShardCount()
-		}
-		logging.Warn("Skipping scan cycle: no owned topic partitions assigned (assigned_shards=%d)", assignedShards)
-		return nil
-	}
-
-	// Fetch latest (high watermark) and earliest (log-start) offsets in parallel
-	// using two sharded ListOffsetsRequests. Franz-go batches each by broker, so
-	// both are O(brokers), not O(topics). Both results are read before any error
-	// check to ensure goroutines are never leaked.
-	type offsetResult struct {
-		offsets map[string]map[int32]int64
-		err     error
-	}
-
-	latestCh := make(chan offsetResult, 1)
-	earliestCh := make(chan offsetResult, 1)
-
-	go func() {
-		offsets, err := t.kafkaClient.GetHighWatermarksBatch(ctx, ownedTopicPartitions)
-		latestCh <- offsetResult{offsets, err}
-	}()
-	go func() {
-		offsets, err := t.kafkaClient.GetEarliestWatermarksBatch(ctx, ownedTopicPartitions)
-		earliestCh <- offsetResult{offsets, err}
-	}()
-
-	latestResult := <-latestCh
-	earliestResult := <-earliestCh
-
-	if latestResult.err != nil {
-		return fmt.Errorf("failed to get high watermarks: %w", latestResult.err)
-	}
-	if earliestResult.err != nil {
-		return fmt.Errorf("failed to get earliest offsets: %w", earliestResult.err)
-	}
-
-	allOffsets := latestResult.offsets
-	allEarliestOffsets := earliestResult.offsets
-
-	// Determine which owned topics need a retention-policy describe refresh.
-	// A topic needs refresh when: (a) policy was never fetched (nil), or
-	// (b) the cached value is older than the configured TTL.
-	cacheTTL := int64(t.configCacheTTLDays) * 86400
-	topicsNeedingDescribe := make([]string, 0, len(ownedTopicPartitions))
-	for topicName := range ownedTopicPartitions {
-		var cachedFetchedAt int64
-		if prev, ok := previousGlobalSnapshot.Topics[topicName]; ok && prev.RetentionPolicy != nil {
-			cachedFetchedAt = prev.RetentionPolicy.FetchedAt
-		}
-		if cachedFetchedAt == 0 || (scanTime-cachedFetchedAt) >= cacheTTL {
-			topicsNeedingDescribe = append(topicsNeedingDescribe, topicName)
-		}
-	}
-
-	// Batch-describe topics that need a policy refresh. Franz-go sends one
-	// DescribeConfigs request per 200-topic chunk, keeping broker load light.
-	freshPolicies := map[string]string{}
-	if len(topicsNeedingDescribe) > 0 {
-		logging.Info("Describing retention policy for %d topic(s) (cache TTL=%d days)", len(topicsNeedingDescribe), t.configCacheTTLDays)
-		var describeErr error
-		freshPolicies, describeErr = t.kafkaClient.GetTopicConfigsBatch(ctx, topicsNeedingDescribe)
-		if describeErr != nil {
-			logging.Warn("Failed to describe topic configs: %v", describeErr)
-			freshPolicies = map[string]string{}
-		}
-	}
-
-	topicData := make([]scanTopicData, 0, len(ownedTopicPartitions))
-	for topicName, ownedPartitions := range ownedTopicPartitions {
-		offsets, ok := allOffsets[topicName]
-		if !ok {
-			logging.Warn("No offsets returned for topic %s, skipping", topicName)
-			continue
-		}
-		topicData = append(topicData, scanTopicData{
-			name:            topicName,
-			partitions:      ownedPartitions,
-			offsets:         offsets,
-			earliestOffsets: allEarliestOffsets[topicName],
-		})
-	}
-
-	for _, meta := range topicData {
-		topicStatus := &models.TopicStatus{
-			Name:           meta.name,
-			PartitionCount: int32(len(meta.partitions)),
-			Partitions:     make(map[int32]*models.PartitionInfo),
-			LastUpdate:     scanTime,
-			DiscoveryTime:  scanTime,
-		}
-
-		// Preserve the Ignored flag from the previous snapshot to ensure that
-		// ignore state set via API persists across scan cycles.
-		// Also carry forward the existing retention policy as a fallback.
-		if previousTopic, ok := previousGlobalSnapshot.Topics[meta.name]; ok {
-			topicStatus.Ignored = previousTopic.Ignored
-			topicStatus.IgnoredAt = previousTopic.IgnoredAt
-			if previousTopic.DiscoveryTime > 0 {
-				topicStatus.DiscoveryTime = previousTopic.DiscoveryTime
-			}
-			topicStatus.RetentionPolicy = previousTopic.RetentionPolicy
-		}
-
-		// Apply freshly described retention policy if available.
-		if policy, ok := freshPolicies[meta.name]; ok {
-			topicStatus.RetentionPolicy = &models.RetentionPolicy{
-				CleanupPolicy: policy,
-				FetchedAt:     scanTime,
-			}
-		}
-
-		var oldestTimestamp int64
-		var newestTimestamp int64
-
-		for _, partID := range meta.partitions {
-			offset, ok := meta.offsets[partID]
-			if !ok {
-				logging.Warn("Missing offset for %s partition %d", meta.name, partID)
-				continue
-			}
-			processedPartitions++
-
-			earliestOffset := meta.earliestOffsets[partID]
-			previous := previousPartitionInfo(previousGlobalSnapshot, meta.name, partID)
-			partInfo := buildPartitionInfo(partID, offset, earliestOffset, previous, scanTime)
-
-			topicStatus.Partitions[partID] = partInfo
-
-			if oldestTimestamp == 0 || partInfo.Timestamp < oldestTimestamp {
-				oldestTimestamp = partInfo.Timestamp
-			}
-			if newestTimestamp == 0 || partInfo.Timestamp > newestTimestamp {
-				newestTimestamp = partInfo.Timestamp
-			}
-			if !topicStatus.RetentionPolicy.IsCompacted() {
-				topicStatus.TotalMessageCount += partInfo.MessageCount
-			}
-		}
-
-		if oldestTimestamp > 0 {
-			topicStatus.OldestPartitionAge = models.CalculateDuration(time.Unix(oldestTimestamp, 0).UTC())
-		}
-		if newestTimestamp > 0 {
-			topicStatus.NewestPartitionAge = models.CalculateDuration(time.Unix(newestTimestamp, 0).UTC())
-		}
-
-		// Include non-owned partitions from the global snapshot so that the
-		// record written to the tracker topic always carries the full partition
-		// state for this topic. After log compaction only the latest record per
-		// topic key survives; omitting partitions owned by other instances would
-		// cause their state to disappear from cold-start replays, which in turn
-		// triggers accidental timestamp resets for those partitions on every scan.
-		if globalTopic, ok := previousGlobalSnapshot.Topics[meta.name]; ok {
-			for partID, partInfo := range globalTopic.Partitions {
-				if _, owned := topicStatus.Partitions[partID]; !owned {
-					topicStatus.Partitions[partID] = partInfo
-					if !topicStatus.RetentionPolicy.IsCompacted() {
-						topicStatus.TotalMessageCount += partInfo.MessageCount
-					}
-				}
-			}
-		}
-
-		// For compacted topics message counts are meaningless (compaction removes
-		// records), so we use -1 as a sentinel that the API and UI render as N/A.
-		if topicStatus.RetentionPolicy.IsCompacted() {
-			topicStatus.TotalMessageCount = -1
-			for _, p := range topicStatus.Partitions {
-				p.MessageCount = -1
-			}
-		}
-
-		// A topic is empty when every partition reports earliest == latest offset.
-		// Non-owned partitions carried over from the global snapshot preserve their
-		// IsEmpty value, so the computation is correct in multi-instance mode too.
-		topicStatus.IsEmpty = len(topicStatus.Partitions) > 0
-		for _, p := range topicStatus.Partitions {
-			if !p.IsEmpty {
-				topicStatus.IsEmpty = false
-				break
-			}
-		}
-
-		snapshot.Topics[meta.name] = topicStatus
-		processedTopics++
-	}
-
-	if err := t.stateManager.SaveSnapshot(ctx, snapshot); err != nil {
-		logging.Warn("Failed to save snapshot: %v", err)
-	}
-
-	// Emit tombstones for topics that existed in the previous snapshot but are
-	// no longer present in Kafka. This keeps the compacted tracker topic clean
-	// so that deleted topics do not reappear when the tracker restarts.
-	for topicName := range previousGlobalSnapshot.Topics {
-		if _, exists := kafkaTopicSet[topicName]; !exists {
-			logging.Info("Topic %q no longer exists in Kafka, emitting tombstone", topicName)
-			if err := t.stateManager.DeleteTopicState(ctx, topicName); err != nil {
-				logging.Warn("Failed to emit tombstone for deleted topic %q: %v", topicName, err)
-			}
-		}
-	}
-
-	logging.Info("Scan cycle completed in %s: listed_topics=%d assigned_topics=%d processed_topics=%d processed_partitions=%d",
-		time.Since(scanStartedAt), len(allTopics), assignedTopics, processedTopics, processedPartitions)
-	logging.Debug("Scan completed. Found %d topics", len(snapshot.Topics))
-	return nil
-}
 
 // syncGlobalFromState populates globalTopics from the offline state replay and
 // stores the initial globalSnapshot. Called once during Start() after the state
@@ -614,32 +216,7 @@ func (t *TopicTracker) syncGlobalFromState(snapshot *kafka.StateSnapshot) {
 // consumer into globalTopics or activeInstances, then atomically publishes
 // an updated snapshot.
 func (t *TopicTracker) applyGlobalRecord(key string, value []byte) {
-	if instanceID, ok := strings.CutPrefix(key, "tracker-instance:"); ok {
-		t.applyHeartbeatRecord(instanceID, value)
-		return
-	}
-
-	t.globalMu.Lock()
-	defer t.globalMu.Unlock()
-
-	if value == nil {
-		delete(t.globalTopics, key)
-	} else {
-		var state kafka.TopicState
-		if err := json.Unmarshal(value, &state); err != nil {
-			logging.Warn("applyGlobalRecord: failed to unmarshal topic state for key %s: %v", key, err)
-			return
-		}
-		incoming := buildTopicStatusFromState(&state)
-		// Merge rather than replace: preserve partition data from the existing
-		// global state for any partitions absent in the incoming record. This
-		// guards against partial writes (e.g. records written by a single
-		// instance that only owns a subset of the topic's partitions) silently
-		// discarding state for partitions owned by other instances.
-		t.globalTopics[state.Topic] = mergeGlobalTopicRecord(t.globalTopics[state.Topic], incoming)
-	}
-
-	t.globalSnapshot.Store(t.buildGlobalSnapshotLocked())
+	t.consumerManager.applyGlobalRecord(key, value)
 }
 
 // buildGlobalSnapshotLocked constructs a read-only ClusterSnapshot from the
@@ -689,22 +266,6 @@ func (t *TopicTracker) applyHeartbeatRecord(instanceID string, value []byte) {
 	}
 
 	t.activeInstances.Store(&next)
-}
-
-// startGlobalConsumerLoop tails the tracker topic from resumeOffsets and
-// merges every incoming record into the global snapshot via applyGlobalRecord.
-// The loop runs until Stop() cancels its context.
-func (t *TopicTracker) startGlobalConsumerLoop(ctx context.Context, resumeOffsets map[int32]int64) {
-	loopCtx, cancel := context.WithCancel(ctx)
-	t.globalCancel = cancel
-
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
-		logging.Info("Global consumer loop started (combined multi-instance view)")
-		t.stateManager.SubscribeGlobalUpdates(loopCtx, resumeOffsets, t.applyGlobalRecord)
-		logging.Info("Global consumer loop stopped")
-	}()
 }
 
 // buildTopicStatusFromState converts a TopicState into a TopicStatus with
@@ -900,74 +461,7 @@ func mergeRetentionPolicy(existing, incoming *models.RetentionPolicy) *models.Re
 }
 
 func (t *TopicTracker) syncInstancesFromState(snapshot *kafka.StateSnapshot) {
-	now := time.Now().UTC()
-	instances := make(map[string]models.InstanceInfo, len(snapshot.Instances))
-
-	var expiredIDs []string
-
-	for instanceID, hb := range snapshot.Instances {
-		if !hb.IsActive(now) {
-			expiredIDs = append(expiredIDs, instanceID)
-			continue
-		}
-
-		instances[instanceID] = models.InstanceInfo{
-			InstanceID:           instanceID,
-			LastHeartbeatAt:      hb.LastHeartbeatAt,
-			HeartbeatIntervalSec: hb.HeartbeatIntervalSec,
-			ScanIntervalSec:      hb.ScanIntervalSec,
-			GroupID:              hb.GroupID,
-			AssignedShards:       hb.AssignedShards,
-			IsActive:             true,
-		}
-	}
-
-	t.activeInstances.Store(&instances)
-
-	// Write tombstones for expired instances so they don't reappear on
-	// subsequent restarts. Fire-and-forget with a short timeout; failure
-	// is harmless — the instances will simply be pruned again next time.
-	if len(expiredIDs) > 0 && t.stateManager != nil {
-		logging.Info("Pruning %d expired instance(s) from state: %v", len(expiredIDs), expiredIDs)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		for _, id := range expiredIDs {
-			if err := t.stateManager.DeregisterInstance(ctx, id); err != nil {
-				logging.Warn("Failed to write tombstone for expired instance %s: %v", id, err)
-			}
-		}
-	}
-}
-
-// writeLocalHeartbeat produces the local instance's HeartbeatRecord to the
-// tracker topic. Other instances compute IsActive by comparing the heartbeat
-// timestamp against 3× the declared heartbeat interval.
-func (t *TopicTracker) writeLocalHeartbeat(ctx context.Context) error {
-	if t.stateManager == nil {
-		return nil
-	}
-	now := time.Now().UTC().Unix()
-	heartbeatIntervalSec := int(t.heartbeatInterval / time.Second)
-
-	var assignedShards int
-	if t.workloadBalancer != nil {
-		assignedShards = t.workloadBalancer.AssignedShardCount()
-	}
-
-	record := &kafka.HeartbeatRecord{
-		Version:              1,
-		InstanceID:           t.instanceID,
-		LastHeartbeatAt:      now,
-		HeartbeatIntervalSec: heartbeatIntervalSec,
-		ScanIntervalSec:      int(t.scanInterval / time.Second),
-		GroupID:              t.consumerGroupID,
-		AssignedShards:       assignedShards,
-	}
-
-	if err := t.stateManager.SaveInstanceHeartbeat(ctx, record); err != nil {
-		return fmt.Errorf("failed to write local heartbeat: %w", err)
-	}
-	return nil
+	t.heartbeatManager.syncInstancesFromState(snapshot)
 }
 
 func (t *TopicTracker) GetSnapshot() *models.ClusterSnapshot {
@@ -994,14 +488,7 @@ func BuildTopicStatusesFromSnapshot(snapshot *kafka.StateSnapshot) map[string]*m
 // updated snapshot to the tracker topic, and emits tombstones for deleted topics.
 // Safe to call on a tracker that has not been Start()ed.
 func (t *TopicTracker) RunOnceScan(ctx context.Context) error {
-	if err := t.stateManager.EnsureTrackerTopic(ctx); err != nil {
-		logging.Warn("Could not ensure tracker topic: %v", err)
-	}
-	snapshot, _, err := t.stateManager.LoadLatestSnapshot(ctx)
-	if err == nil && snapshot != nil {
-		t.syncGlobalFromState(snapshot)
-	}
-	return t.scanTopics(ctx)
+	return t.scanManager.runOnceScan(ctx)
 }
 
 func previousPartitionInfo(snapshot *models.ClusterSnapshot, topicName string, partID int32) *models.PartitionInfo {
