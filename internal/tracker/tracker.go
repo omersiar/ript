@@ -42,22 +42,26 @@ type WorkloadBalancer interface {
 	OwnsTopic(topicName string) bool
 }
 
+type assignmentHookSetter interface {
+	SetAssignmentChangeHook(hook func())
+}
+
 type TopicTracker struct {
-	kafkaClient          KafkaClient
-	stateManager         StateManager
-	workloadBalancer     WorkloadBalancer
-	scanManager          *ScanManager
-	heartbeatManager     *HeartbeatManager
-	consumerManager      *ConsumerManager
-	scanInterval         time.Duration
-	instanceID           string
-	consumerGroupID      string
-	heartbeatInterval    time.Duration
-	configCacheTTLDays   int
-	activeInstances      atomic.Pointer[map[string]models.InstanceInfo]
-	stopChan             chan struct{}
-	wg                   sync.WaitGroup
-	scanMu               sync.Mutex
+	kafkaClient        KafkaClient
+	stateManager       StateManager
+	workloadBalancer   WorkloadBalancer
+	scanManager        *ScanManager
+	heartbeatManager   *HeartbeatManager
+	consumerManager    *ConsumerManager
+	scanInterval       time.Duration
+	instanceID         string
+	consumerGroupID    string
+	heartbeatInterval  time.Duration
+	configCacheTTLDays int
+	activeInstances    atomic.Pointer[map[string]models.InstanceInfo]
+	stopChan           chan struct{}
+	wg                 sync.WaitGroup
+	scanMu             sync.Mutex
 	// globalMu guards globalTopics. globalSnapshot is rebuilt atomically after
 	// every merge so readers never need to hold globalMu.
 	globalMu        sync.RWMutex
@@ -156,6 +160,9 @@ func (t *TopicTracker) Start(ctx context.Context) error {
 	}
 
 	if t.workloadBalancer != nil {
+		if hookable, ok := t.workloadBalancer.(assignmentHookSetter); ok {
+			hookable.SetAssignmentChangeHook(t.heartbeatManager.signalAssignmentChanged)
+		}
 		if err := t.workloadBalancer.Start(ctx); err != nil {
 			return err
 		}
@@ -195,7 +202,6 @@ func (t *TopicTracker) Stop() {
 	t.wg.Wait()
 	logging.Info("Topic tracker stopped")
 }
-
 
 // syncGlobalFromState populates globalTopics from the offline state replay and
 // stores the initial globalSnapshot. Called once during Start() after the state
@@ -357,12 +363,12 @@ func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.Topi
 	}
 
 	merged := &models.TopicStatus{
-		Name:          incoming.Name,
-		LastUpdate:    incoming.LastUpdate,
-		DiscoveryTime: mergeTopicDiscoveryTime(existing.DiscoveryTime, incoming.DiscoveryTime),
-		Ignored:       incoming.Ignored,
-		IgnoredAt:     incoming.IgnoredAt,
-		Partitions:    make(map[int32]*models.PartitionInfo, len(incoming.Partitions)+len(existing.Partitions)),
+		Name:            incoming.Name,
+		LastUpdate:      incoming.LastUpdate,
+		DiscoveryTime:   mergeTopicDiscoveryTime(existing.DiscoveryTime, incoming.DiscoveryTime),
+		Ignored:         incoming.Ignored,
+		IgnoredAt:       incoming.IgnoredAt,
+		Partitions:      make(map[int32]*models.PartitionInfo, len(incoming.Partitions)+len(existing.Partitions)),
 		RetentionPolicy: mergeRetentionPolicy(existing.RetentionPolicy, incoming.RetentionPolicy),
 	}
 

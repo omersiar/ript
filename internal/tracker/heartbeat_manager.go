@@ -12,11 +12,15 @@ import (
 
 // HeartbeatManager owns tracker instance heartbeat lifecycle and active-instance sync.
 type HeartbeatManager struct {
-	tracker *TopicTracker
+	tracker              *TopicTracker
+	assignmentSignalChan chan struct{}
 }
 
 func NewHeartbeatManager(tracker *TopicTracker) *HeartbeatManager {
-	return &HeartbeatManager{tracker: tracker}
+	return &HeartbeatManager{
+		tracker:              tracker,
+		assignmentSignalChan: make(chan struct{}, 1),
+	}
 }
 
 func (m *HeartbeatManager) startLoop(ctx context.Context) {
@@ -39,7 +43,22 @@ func (m *HeartbeatManager) heartbeatLoop(ctx context.Context) {
 			if err := m.writeLocalHeartbeat(ctx); err != nil {
 				logging.Warn("Heartbeat write failed: %v", err)
 			}
+		case <-m.assignmentSignalChan:
+			// Flush assignment count changes immediately after rebalances so
+			// active-instance shard counts do not lag until next periodic tick.
+			writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			if err := m.writeLocalHeartbeat(writeCtx); err != nil {
+				logging.Warn("Heartbeat write after assignment change failed: %v", err)
+			}
+			cancel()
 		}
+	}
+}
+
+func (m *HeartbeatManager) signalAssignmentChanged() {
+	select {
+	case m.assignmentSignalChan <- struct{}{}:
+	default:
 	}
 }
 

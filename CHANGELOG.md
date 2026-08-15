@@ -4,7 +4,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- topic retention policy (cleanup.policy) support with Compact/Delete+Compact badges
+- RIPT_TOPIC_CONFIG_CACHE_TTL_DAYS configuration option (default 30 days)
+
+### Changed
+
+- upgraded to go1.26.5
+- refactored tracker module for better separation of concerns:
+  - extracted consumer_manager.go for consumer group management
+  - extracted heartbeat_manager.go for consumer group heartbeat coordination
+  - extracted scan_manager.go for topic scanning logic
+- logging module refactored with parseLevel() and newLogger() helper functions
+- improved code organization and reduced complexity in tracker subsystem
+
+### Removed
+
+- message count tracking for compacted topics, since it can not be determined solely by looking at the offsets
+
 ## v0.4.0 - 2026-07-03
+
+### Added
+
+- ability to ignore/unignore topic(s)
+- full url generation for sharing the dashboard with all the states
+- copy to clipboard helper
+- discovery time of the topics
 
 ### Fixed
 
@@ -14,22 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - upgraded to go1.26.4
 
-### Added
-
-- ability to ignore/unignore topic(s)
-- full url generation for sharing the dashboard with all the states
-- copy to clipboard helper
-- discovery time of the topics
-
 ## v0.3.3 - 2026-06-19
-
-### Fixed
-
-- CVE-2026-40898 quic-go
 
 ### Added
 
 - add "Has Unused" badge
+
+### Fixed
+
+- CVE-2026-40898 quic-go
 
 ### Changed
 
@@ -38,13 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## v0.3.2 - 2026-05-18
 
-### Fixed
-
-- page selector was not working
-
 ### Added
 
 - ability to show also partialy empty topics if it has one or more empty partitions
+
+### Fixed
+
+- page selector was not working
 
 ### Changed
 
@@ -120,6 +141,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevent scans from running while snapshots are being saved
 - Configurable static files directory for the web dashboard
 
+### Fixed
+
+- Graceful shutdown when broker connection is lost
+- Default topic creation timeout
+- Overlapping is-invalid regex validation indicator
+
 ### Changed
 
 - Cleaned up and reduced code across API, tracker, state manager, and models
@@ -129,12 +156,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Test harness and testing code from main app
 - Various dead code and unnecessary nil checks
-
-### Fixed
-
-- Graceful shutdown when broker connection is lost
-- Default topic creation timeout
-- Overlapping is-invalid regex validation indicator
 
 ## v0.0.1 - 2026-04-04
 

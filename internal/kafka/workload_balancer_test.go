@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -142,5 +143,44 @@ func TestWorkloadBalancerWaitForStableAssignmentsTimeout(t *testing.T) {
 	ctx := context.Background()
 	if ok := b.WaitForStableAssignments(ctx, 100*time.Millisecond); ok {
 		t.Fatal("expected WaitForStableAssignments to time out while still rebalancing")
+	}
+}
+
+func TestWorkloadBalancerAssignmentHookFiresOnAddAndRemove(t *testing.T) {
+	b := &WorkloadBalancer{
+		consumerGroupID: "group-a",
+		assignedShards:  make(map[int32]struct{}),
+		rebalancing:     false,
+	}
+
+	var calls int32
+	b.SetAssignmentChangeHook(func() {
+		atomic.AddInt32(&calls, 1)
+	})
+
+	b.addAssignments([]int32{0, 1})
+	b.removeAssignments([]int32{1})
+
+	if got, want := atomic.LoadInt32(&calls), int32(2); got != want {
+		t.Fatalf("assignment hook calls=%d, want %d", got, want)
+	}
+}
+
+func TestWorkloadBalancerAssignmentHookFiresOnReset(t *testing.T) {
+	b := &WorkloadBalancer{
+		consumerGroupID: "group-a",
+		assignedShards:  map[int32]struct{}{0: {}, 1: {}},
+		rebalancing:     false,
+	}
+
+	var calls int32
+	b.SetAssignmentChangeHook(func() {
+		atomic.AddInt32(&calls, 1)
+	})
+
+	b.updateAssignment(nil)
+
+	if got, want := atomic.LoadInt32(&calls), int32(1); got != want {
+		t.Fatalf("assignment hook calls=%d, want %d", got, want)
 	}
 }

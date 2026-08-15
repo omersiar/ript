@@ -31,10 +31,20 @@ type WorkloadBalancer struct {
 	started         bool
 	rebalancing     bool
 	assignmentEpoch uint64
+	assignmentHook  func()
 
 	client   *kgo.Client
 	stopChan chan struct{}
 	wg       sync.WaitGroup
+}
+
+// SetAssignmentChangeHook registers a callback invoked whenever assignment
+// membership changes (gained, released, or lost). The callback is called
+// outside the balancer lock and should be non-blocking.
+func (b *WorkloadBalancer) SetAssignmentChangeHook(hook func()) {
+	b.mu.Lock()
+	b.assignmentHook = hook
+	b.mu.Unlock()
 }
 
 type WorkloadBalancerOptions struct {
@@ -223,6 +233,7 @@ func (b *WorkloadBalancer) updateAssignment(partitions []int32) {
 	b.assignedShards = assignment
 	b.rebalancing = true
 	b.mu.Unlock()
+	b.notifyAssignmentHook()
 
 	logging.Info("Workload assignment reset: group=%s assigned_shards=%d", b.consumerGroupID, len(partitions))
 }
@@ -243,6 +254,7 @@ func (b *WorkloadBalancer) addAssignments(partitions []int32) {
 	total := len(b.assignedShards)
 	epoch := b.assignmentEpoch
 	b.mu.Unlock()
+	b.notifyAssignmentHook()
 
 	logging.Info("Workload assignment gained: group=%s added=%d assigned_shards=%d epoch=%d", b.consumerGroupID, len(partitions), total, epoch)
 }
@@ -260,8 +272,18 @@ func (b *WorkloadBalancer) removeAssignments(partitions []int32) {
 	}
 	total := len(b.assignedShards)
 	b.mu.Unlock()
+	b.notifyAssignmentHook()
 
 	logging.Info("Workload assignment released: group=%s removed=%d assigned_shards=%d", b.consumerGroupID, len(partitions), total)
+}
+
+func (b *WorkloadBalancer) notifyAssignmentHook() {
+	b.mu.RLock()
+	hook := b.assignmentHook
+	b.mu.RUnlock()
+	if hook != nil {
+		hook()
+	}
 }
 
 func (b *WorkloadBalancer) IsRebalancing() bool {
