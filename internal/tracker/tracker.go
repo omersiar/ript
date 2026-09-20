@@ -374,23 +374,18 @@ func mergeGlobalTopicRecord(existing, incoming *models.TopicStatus) *models.Topi
 
 	for partID, incomingPart := range incoming.Partitions {
 		existingPart, exists := existing.Partitions[partID]
-		// Keep whichever partition was more recently scanned. A higher ScannedAt
-		// means a fresher observation from the owning instance. This prevents a
-		// concurrent scan from overwriting a valid IsEmpty (or offset) with a
-		// stale carried-over value: the instance that actually owns a partition
-		// always writes it with ScannedAt=now, which beats any carried-over copy
-		// that retains the previous scan's ScannedAt.
-		// When ScannedAt values are equal (e.g. both zero in old state records),
-		// incoming takes precedence to preserve the existing write-ordering behaviour.
 		if !exists || incomingPart.ScannedAt >= existingPart.ScannedAt {
-			merged.Partitions[partID] = incomingPart
+			partCopy := *incomingPart
+			merged.Partitions[partID] = &partCopy
 		} else {
-			merged.Partitions[partID] = existingPart
+			partCopy := *existingPart
+			merged.Partitions[partID] = &partCopy
 		}
 	}
 	for partID, existingPart := range existing.Partitions {
 		if _, present := merged.Partitions[partID]; !present {
-			merged.Partitions[partID] = existingPart
+			partCopy := *existingPart
+			merged.Partitions[partID] = &partCopy
 		}
 	}
 
