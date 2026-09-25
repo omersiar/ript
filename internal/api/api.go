@@ -3,6 +3,7 @@ package api
 import (
 	"cmp"
 	"context"
+	"encoding/csv"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -136,13 +137,20 @@ func (s *Server) handleListTopics(c *gin.Context) {
 	}
 
 	snapshot := s.trackerPtr.GetSnapshot()
-	result, err := s.buildListedTopics(c, func(_ thresholdValues) []*models.TopicStatus {
+	listSource := func(_ thresholdValues) []*models.TopicStatus {
 		topics := make([]*models.TopicStatus, 0, len(snapshot.Topics))
 		for _, topic := range snapshot.Topics {
 			topics = append(topics, topic)
 		}
 		return topics
-	})
+	}
+
+	if isCSVExport(c) {
+		s.exportTopicsCSV(c, "topics.csv", listSource)
+		return
+	}
+
+	result, err := s.buildListedTopics(c, listSource)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -199,17 +207,17 @@ func (s *Server) handleGetTopic(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"name":               topic.Name,
-		"discovery_time":     topic.DiscoveryTime,
-		"partition_count":    topic.PartitionCount,
-		"partitions":         partitions,
-		"oldest_timestamp":   oldestTS,
-		"newest_timestamp":   newestTS,
-		"last_update":        topic.LastUpdate,
-		"is_empty":           topic.IsEmpty,
-		"ignored":            topic.Ignored,
+		"name":                topic.Name,
+		"discovery_time":      topic.DiscoveryTime,
+		"partition_count":     topic.PartitionCount,
+		"partitions":          partitions,
+		"oldest_timestamp":    oldestTS,
+		"newest_timestamp":    newestTS,
+		"last_update":         topic.LastUpdate,
+		"is_empty":            topic.IsEmpty,
+		"ignored":             topic.Ignored,
 		"total_message_count": topic.TotalMessageCount,
-		"cleanup_policy":     func() string {
+		"cleanup_policy": func() string {
 			if topic.RetentionPolicy != nil {
 				return topic.RetentionPolicy.CleanupPolicy
 			}
@@ -223,9 +231,16 @@ func (s *Server) handleGetUnused(c *gin.Context) {
 		return
 	}
 
-	result, err := s.buildListedTopics(c, func(thresholds thresholdValues) []*models.TopicStatus {
+	listSource := func(thresholds thresholdValues) []*models.TopicStatus {
 		return s.trackerPtr.GetUnusedTopics(thresholds.UnusedDays)
-	})
+	}
+
+	if isCSVExport(c) {
+		s.exportTopicsCSV(c, "unused_topics.csv", listSource)
+		return
+	}
+
+	result, err := s.buildListedTopics(c, listSource)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -248,9 +263,16 @@ func (s *Server) handleGetEmpty(c *gin.Context) {
 		return
 	}
 
-	result, err := s.buildListedTopics(c, func(_ thresholdValues) []*models.TopicStatus {
+	listSource := func(_ thresholdValues) []*models.TopicStatus {
 		return s.trackerPtr.GetEmptyTopics()
-	})
+	}
+
+	if isCSVExport(c) {
+		s.exportTopicsCSV(c, "empty_topics.csv", listSource)
+		return
+	}
+
+	result, err := s.buildListedTopics(c, listSource)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -266,21 +288,23 @@ func (s *Server) handleGetEmpty(c *gin.Context) {
 	})
 }
 
-func (s *Server) buildListedTopics(c *gin.Context, listSource func(thresholdValues) []*models.TopicStatus) (*listedTopicsResult, error) {
-	p, err := s.parsePagination(c)
-	if err != nil {
-		return nil, err
-	}
+// isCSVExport reports whether the request asked for a CSV export via ?format=csv.
+func isCSVExport(c *gin.Context) bool {
+	return strings.EqualFold(strings.TrimSpace(c.Query("format")), "csv")
+}
 
+// buildFilteredTopicResponses applies thresholds, search, and ignored filtering (plus
+// sorting/status annotation) without pagination, shared by JSON listing and CSV export.
+func (s *Server) buildFilteredTopicResponses(c *gin.Context, listSource func(thresholdValues) []*models.TopicStatus) ([]topicResponse, thresholdValues, error) {
 	thresholds, err := s.parseThresholds(c)
 	if err != nil {
-		return nil, err
+		return nil, thresholdValues{}, err
 	}
 
 	sortBy, sortDir := parseSort(c)
 	searchRe, err := parseSearch(c)
 	if err != nil {
-		return nil, err
+		return nil, thresholdValues{}, err
 	}
 	ignoredFilter := parseIgnoredFilter(c)
 
@@ -298,6 +322,19 @@ func (s *Server) buildListedTopics(c *gin.Context, listSource func(thresholdValu
 	}
 
 	s.sortTopicResponses(responses, sortBy, sortDir, thresholds.StaleDays, thresholds.UnusedDays)
+	return responses, thresholds, nil
+}
+
+func (s *Server) buildListedTopics(c *gin.Context, listSource func(thresholdValues) []*models.TopicStatus) (*listedTopicsResult, error) {
+	p, err := s.parsePagination(c)
+	if err != nil {
+		return nil, err
+	}
+
+	responses, thresholds, err := s.buildFilteredTopicResponses(c, listSource)
+	if err != nil {
+		return nil, err
+	}
 
 	total := len(responses)
 	paged, hasMore := paginateTopicResponses(responses, p)
@@ -308,6 +345,52 @@ func (s *Server) buildListedTopics(c *gin.Context, listSource func(thresholdValu
 		hasMore:    hasMore,
 		thresholds: thresholds,
 	}, nil
+}
+
+// exportTopicsCSV writes the full filtered (unpaginated) topic set as a CSV attachment.
+func (s *Server) exportTopicsCSV(c *gin.Context, filename string, listSource func(thresholdValues) []*models.TopicStatus) {
+	responses, _, err := s.buildFilteredTopicResponses(c, listSource)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	writeTopicsCSV(c, filename, responses)
+}
+
+// writeTopicsCSV encodes topic rows as CSV with a Content-Disposition attachment header.
+func writeTopicsCSV(c *gin.Context, filename string, rows []topicResponse) {
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+
+	w := csv.NewWriter(c.Writer)
+	_ = w.Write([]string{
+		"name", "partition_count", "total_message_count", "status", "is_empty",
+		"has_empty_partitions", "ignored", "cleanup_policy",
+		"discovery_time", "oldest_partition_timestamp", "newest_partition_timestamp",
+	})
+	for _, r := range rows {
+		_ = w.Write([]string{
+			r.Name,
+			strconv.Itoa(int(r.PartitionCount)),
+			strconv.FormatInt(r.TotalMessageCount, 10),
+			r.Status,
+			strconv.FormatBool(r.IsEmpty),
+			strconv.FormatBool(r.HasEmptyPartitions),
+			strconv.FormatBool(r.Ignored),
+			r.CleanupPolicy,
+			formatCSVTimestamp(r.DiscoveryTime),
+			formatCSVTimestamp(r.OldestPartitionTimestamp),
+			formatCSVTimestamp(r.NewestPartitionTimestamp),
+		})
+	}
+	w.Flush()
+}
+
+func formatCSVTimestamp(unixSeconds int64) string {
+	if unixSeconds <= 0 {
+		return ""
+	}
+	return time.Unix(unixSeconds, 0).UTC().Format(time.RFC3339)
 }
 
 func (s *Server) handleStats(c *gin.Context) {
@@ -579,7 +662,6 @@ func statusOrder(t topicResponse, now int64, staleDays, unusedDays int) topicSta
 	}
 	return statusActive
 }
-
 
 func statusLabelFromOrder(order topicStatusBucket) string {
 	if label, ok := topicStatusLabels[order]; ok {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -44,7 +45,7 @@ func newListCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.regex, "regex", false, "Interpret --search as regex")
 	cmd.Flags().IntVar(&opts.staleDays, "stale-days", 7, "Partition stale threshold in days")
 	cmd.Flags().IntVar(&opts.unusedDays, "unused-days", 30, "Topic unused threshold in days")
-	cmd.Flags().StringVar(&opts.output, "output", outputTable, "Output format: table|json")
+	cmd.Flags().StringVar(&opts.output, "output", outputTable, "Output format: table|json|csv")
 	cmd.Flags().StringVar(&opts.logLevel, "log-level", "error", "Log level: debug|info|warn|error")
 
 	return cmd
@@ -79,11 +80,15 @@ func runList(ctx context.Context, opts *listOptions) error {
 		return err
 	}
 
-	if normalizeOutput(opts.output) == outputJSON {
+	switch normalizeOutput(opts.output) {
+	case outputJSON:
 		return printListJSON(filtered, opts)
+	case outputCSV:
+		return printListCSV(filtered, opts)
+	default:
+		printListTable(filtered, opts)
+		return nil
 	}
-	printListTable(filtered, opts)
-	return nil
 }
 
 type listJSONItem struct {
@@ -192,6 +197,45 @@ func printListTable(topics []*models.TopicStatus, opts *listOptions) {
 		}
 	}
 	w.Flush()
+}
+
+func printListCSV(topics []*models.TopicStatus, opts *listOptions) error {
+	w := csv.NewWriter(os.Stdout)
+	if err := w.Write([]string{"TOPIC", "STATUS", "EMPTY", "PARTITIONS", "STALE_PARTITIONS", "MESSAGES", "DISCOVERED", "OLDEST_AGE", "NEWEST_AGE", "POLICY"}); err != nil {
+		return err
+	}
+	for _, topic := range topics {
+		stalePartitions := collectStalePartitions(topic, opts.staleDays)
+		emptyVal := "no"
+		if topic.IsEmpty {
+			emptyVal = "yes"
+		}
+		msgVal := fmt.Sprintf("%d", topic.TotalMessageCount)
+		if topic.TotalMessageCount == -1 {
+			msgVal = "n/a"
+		}
+		policyVal := "-"
+		if topic.RetentionPolicy != nil && topic.RetentionPolicy.CleanupPolicy != "" {
+			policyVal = topic.RetentionPolicy.CleanupPolicy
+		}
+		row := []string{
+			topic.Name,
+			classifyTopicStatus(topic, opts.staleDays, opts.unusedDays),
+			emptyVal,
+			fmt.Sprintf("%d", topic.PartitionCount),
+			fmt.Sprintf("%d", len(stalePartitions)),
+			msgVal,
+			formatDiscoveryAge(topic.DiscoveryTime),
+			topic.OldestPartitionAge.String(),
+			topic.NewestPartitionAge.String(),
+			policyVal,
+		}
+		if err := w.Write(row); err != nil {
+			return err
+		}
+	}
+	w.Flush()
+	return w.Error()
 }
 
 func formatDiscoveryAge(discoveryTime int64) string {

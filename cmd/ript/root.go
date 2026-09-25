@@ -10,6 +10,7 @@ import (
 const (
 	outputTable = "table"
 	outputJSON  = "json"
+	outputCSV   = "csv"
 )
 
 var rootCmd = &cobra.Command{
@@ -37,9 +38,9 @@ func init() {
 func validateOutputMode(value string) error {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	switch normalized {
-	case outputTable, outputJSON:
+	case outputTable, outputJSON, outputCSV:
 		return nil
 	default:
-		return fmt.Errorf("invalid output format %q: expected %q or %q", value, outputTable, outputJSON)
+		return fmt.Errorf("invalid output format %q: expected %q, %q, or %q", value, outputTable, outputJSON, outputCSV)
 	}
 }

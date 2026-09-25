@@ -4,16 +4,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.5.0 - 2026-09-25
 
 ### Added
 
 - topic retention policy (cleanup.policy) support with Compact/Delete+Compact badges
 - RIPT_TOPIC_CONFIG_CACHE_TTL_DAYS configuration option (default 30 days)
+- CSV export support
+- more filtering options
 
 ### Changed
 
-- upgraded to go1.26.5
+- upgraded to go1.26.8
+- upgraded twmb/franz-go to v1.22.0
 - refactored tracker module for better separation of concerns:
   - extracted consumer_manager.go for consumer group management
   - extracted heartbeat_manager.go for consumer group heartbeat coordination
